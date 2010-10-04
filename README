@@ -1,0 +1,16 @@
+To get up and running quickly you need the following:
+
+* Python 2.6+
+* boto 
+* simplejson
+* prettytable
+* setuptools
+* dateutil
+
+You can install the modules from above with easy_install (http://pypi.python.org/pypi/setuptools)
+
+Check out the project and run "python setup.py install" and the command "stratus" will now available 
+and an egg file will be located in your site-packages directory. You may want to run the command with 
+sudo to install it for all users.
+
+See the full documentation at http://github.com/digitalreasoning/PyStratus/wiki/Documentation
