@@ -118,6 +118,18 @@ class Ec2Cluster(Cluster):
         r.append(group)
     return r
 
+  def _create_custom_security_groups(self, security_groups=[]):
+    """
+    For each security group that doesn't exist we create it
+    """
+
+    all_groups = self._get_all_group_names()
+
+    for group in security_groups:
+        if group not in all_groups:
+            self.ec2Connection.create_security_group(group, 
+                 "Custom group: %s" % group)
+
   def _create_groups(self, role):
     """
     Create the security groups for a given role, including a group for the
@@ -242,9 +254,12 @@ class Ec2Cluster(Cluster):
     for role in roles:
       self._check_role_name(role)  
       self._create_groups(role)
-      
+ 
     user_data = instance_user_data.read_as_gzip_stream()
     security_groups = self._get_group_names(roles) + kwargs.get('security_groups', [])
+
+    # create groups from config that may not exist
+    self._create_custom_security_groups(security_groups)
 
     reservation = self.ec2Connection.run_instances(image_id, min_count=number,
       max_count=number, key_name=kwargs.get('key_name', None),
