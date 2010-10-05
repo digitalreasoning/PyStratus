@@ -287,7 +287,7 @@ def execute(command=None, argv=[]):
                          opt.get('public_key'), opt.get('user_data_file'),
                          opt.get('availability_zone'), opt.get('user_packages'),
                          opt.get('auto_shutdown'), opt.get('env'),
-                         opt.get('security_group'))
+                         opt.get('security_groups'))
     service.launch_master(template, config_dir, opt.get('client_cidr'))
 
   elif command == 'launch-slaves':
@@ -301,7 +301,7 @@ def execute(command=None, argv=[]):
                          opt.get('public_key'), opt.get('user_data_file'),
                          opt.get('availability_zone'), opt.get('user_packages'),
                          opt.get('auto_shutdown'), opt.get('env'),
-                         opt.get('security_group'))
+                         opt.get('security_groups'))
     service.launch_slaves(template)
 
   elif command == 'launch-cluster':
@@ -321,14 +321,14 @@ def execute(command=None, argv=[]):
                          opt.get('public_key'), opt.get('user_data_file'),
                          opt.get('availability_zone'), opt.get('user_packages'),
                          opt.get('auto_shutdown'), opt.get('env'),
-                         opt.get('security_group')),
+                         opt.get('security_groups')),
         InstanceTemplate((DATANODE, TASKTRACKER), number_of_slaves,
                          get_image_id(service.cluster, opt),
                          opt.get('instance_type'), opt.get('key_name'),
                          opt.get('public_key'), opt.get('user_data_file'),
                          opt.get('availability_zone'), opt.get('user_packages'),
                          opt.get('auto_shutdown'), opt.get('env'),
-                         opt.get('security_group')),
+                         opt.get('security_groups')),
                          ]
       for it in instance_templates:
         it.add_env_strings(["CLUSTER_SIZE=%d" % number_of_slaves])
@@ -346,7 +346,7 @@ def execute(command=None, argv=[]):
                            opt.get('availability_zone'),
                            opt.get('user_packages'),
                            opt.get('auto_shutdown'), opt.get('env'),
-                           opt.get('security_group')))
+                           opt.get('security_groups')))
 
     service.launch_cluster(instance_templates, config_dir,
                            opt.get('client_cidr'))

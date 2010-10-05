@@ -318,7 +318,7 @@ def execute(command=None, argv=[]):
              opt.get('user_packages'),
              opt.get('auto_shutdown'), 
              opt.get('env'),
-             opt.get('security_group'))
+             opt.get('security_groups'))
       instance_template.add_env_strings(["CLUSTER_SIZE=%d" % number_of_nodes])
     else:
       print_usage(args[0])
