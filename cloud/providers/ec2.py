@@ -486,6 +486,39 @@ class Ec2Storage(Storage):
       string = string.replace(match, replacement)
     return string
 
+  def check(self):
+    storage_filename = self._get_storage_filename()
+    volume_manager = JsonVolumeManager(storage_filename)
+
+    all_mountable_volumes = []
+    roles = volume_manager.get_roles()
+    for r in roles:
+        all_mountable_volumes.extend(sum(self._get_mountable_volumes(r),[]))
+
+    if not all_mountable_volumes:
+        print "No EBS volumes found. Have you executed 'create-storage' first?"
+        return
+
+    error = False
+
+    # disable boto ERROR logging for now
+    boto_logging = logging.getLogger('boto')
+    level = boto_logging.level
+    boto_logging.setLevel(logging.FATAL)
+
+    for vid in [v.volume_id for v in all_mountable_volumes]:
+        try:
+            self.cluster.ec2Connection.get_all_volumes([vid])        
+        except:
+            error = True
+            print "Volume does not exist: %s" % vid
+
+    if not error:
+        print "Congrats! All volumes exist!"
+
+    # reset boto logging
+    boto_logging.setLevel(level)
+
   def attach(self, role, instances):
     mountable_volumes_list = self._get_mountable_volumes(role)
     if not mountable_volumes_list:

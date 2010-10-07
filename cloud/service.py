@@ -172,6 +172,10 @@ class Service(object):
     storage = self.cluster.get_storage()
     self._print_storage_status(storage)
 
+  def check_storage(self):
+    storage = self.cluster.get_storage()
+    storage.check() 
+
   def create_storage(self, role, number_of_instances,
                      availability_zone, spec_file):
     storage = self.cluster.get_storage()

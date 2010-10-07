@@ -137,6 +137,8 @@ where COMMAND and [OPTIONS] may be one of:
                                         size SIZE in GiB
   create-storage NUM_INSTANCES        create volumes for NUM_INSTANCES instances
     SPEC_FILE                           for CLUSTER, using SPEC_FILE
+  check-storage                       validates that all EBS volumes exist for
+                                        CLUSTER
   delete-storage                      delete all storage volumes for CLUSTER
   attach-storage                      attach storage volumes to CLUSTER
   list-storage                        list storage volumes for CLUSTER
@@ -386,6 +388,10 @@ def execute(command=None, argv=[]):
   elif command == 'attach-storage':
     (opt, args, service) = parse_options_and_config(command, argv, BASIC_OPTIONS)
     service.attach_storage(CASSANDRA_NODE)
+
+  elif command == 'check-storage':
+    (opt, args, service) = parse_options_and_config(command, argv, FORCE_OPTIONS)
+    service.check_storage()
 
   elif command == 'delete-storage':
     (opt, args, service) = parse_options_and_config(command, argv, FORCE_OPTIONS)

@@ -142,6 +142,8 @@ where COMMAND and [OPTIONS] may be one of:
   list-storage                        list storage volumes for CLUSTER
   create-storage ROLE NUM_INSTANCES   create volumes for NUM_INSTANCES instances
     SPEC_FILE                         in ROLE for CLUSTER, using SPEC_FILE
+  check-storage                       validates that all EBS volumes exist for
+                                        CLUSTER
   attach-storage ROLE                 attach storage volumes for ROLE to CLUSTER
   snapshot-storage                    create snapshots from volumes in CLUSTER
   list-snapshots                      list the snapshots created for CLUSTER
@@ -431,6 +433,10 @@ def execute(command=None, argv=[]):
     (opt, args, service) = parse_options_and_config(command, argv, BASIC_OPTIONS,
                                                     ("ROLE",))
     service.attach_storage(args[1])
+
+  elif command == 'check-storage':
+    (opt, args, service) = parse_options_and_config(command, argv, FORCE_OPTIONS)
+    service.check_storage()
 
   elif command == 'delete-storage':
     (opt, args, service) = parse_options_and_config(command, argv, FORCE_OPTIONS)
