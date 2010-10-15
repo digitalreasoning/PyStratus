@@ -37,7 +37,7 @@ echo "export %ENV%" >> ~root/.bash_profile
 echo "export %ENV%" >> ~root/.bashrc
 
 DEFAULT_CASSANDRA_URL="http://mirror.cloudera.com/apache/cassandra/0.6.4/apache-cassandra-0.6.4-bin.tar.gz"
-DEFAULT_CASSANDRA_HOME=/usr/local/apache-cassandra
+CASSANDRA_HOME_ALIAS=/usr/local/apache-cassandra
 
 function install_cassandra() {
 
@@ -52,18 +52,9 @@ function install_cassandra() {
     tar zxf $cassandra_tar_file -C /usr/local
     rm -f $cassandra_tar_file
 
-    if [ ! -z "$CASSANDRA_HOME" ]; then
-      DEFAULT_CASSANDRA_HOME=$CASSANDRA_HOME
-    fi
-
     CASSANDRA_HOME_WITH_VERSION=/usr/local/`ls -1 /usr/local | grep cassandra`
 
-    # symlink the actual cassandra directory to a more standard one (without version)
-    # this is very important so the cluster can be configured more easily after the 
-    # machines start and services started/stopped
-    ln -s $CASSANDRA_HOME_WITH_VERSION $DEFAULT_CASSANDRA_HOME
-
-    echo "export CASSANDRA_HOME=$DEFAULT_CASSANDRA_HOME" >> ~root/.bash_profile
+    echo "export CASSANDRA_HOME=$CASSANDRA_HOME_ALIAS" >> ~root/.bash_profile
     echo 'export PATH=$CASSANDRA_HOME/bin:$PATH' >> ~root/.bash_profile
 }
 
@@ -103,7 +94,7 @@ function configure_cassandra() {
 
   # configure the cassandra.in.sh script based on instance type
   INSTANCE_TYPE=`wget -q -O - http://169.254.169.254/latest/meta-data/instance-type`
-  SETTINGS_FILE=$DEFAULT_CASSANDRA_HOME/bin/cassandra.in.sh
+  SETTINGS_FILE=$CASSANDRA_HOME_WITH_VERSION/bin/cassandra.in.sh
 
   cat > $SETTINGS_FILE <<EOF
 # Licensed to the Apache Software Foundation (ASF) under one
@@ -122,7 +113,7 @@ function configure_cassandra() {
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-cassandra_home=$DEFAULT_CASSANDRA_HOME
+cassandra_home=$CASSANDRA_HOME_ALIAS
 
 # The directory where Cassandra's configs live (required)
 CASSANDRA_CONF=\$cassandra_home/conf
@@ -161,5 +152,16 @@ EOF
   esac
 }
 
+function finish_cassandra {
+    # symlink the actual cassandra directory to a more standard one (without version)
+    # this is very important so the cluster can be configured more easily after the 
+    # machines start and services started/stopped
+    #
+    # NOTE: Stratus also looks for this aliased directory to know when cassandra
+    # is ready to be started
+    ln -s $CASSANDRA_HOME_WITH_VERSION $CASSANDRA_HOME_ALIAS
+}
+
 install_cassandra
 configure_cassandra
+finish_cassandra
