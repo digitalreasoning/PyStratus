@@ -356,7 +356,15 @@ def handleListAllCommand(rows, config_dir, defined_clusters=[]):
 
 def getTotalClusterRunningTime(instances):
   now = datetime.utcnow()
-  return sum([int(ceil((now - dateparser(i.launch_time.split(".")[0])).total_seconds()/3600.0)) for i in instances])
+
+  def total_seconds(td):
+    try:
+        # python 2.7
+        return td.total_seconds()
+    except:
+        return (td.microseconds + (td.seconds + td.days * 24 * 3600) * 10**6) / 10**6
+
+  return sum([int(ceil(total_seconds(now - dateparser(i.launch_time.split(".")[0]))/3600.0)) for i in instances])
 
 def getServiceTypeAndCloudProvider(cluster_name):
   for (service_type, providers) in SERVICE_PROVIDER_MAP.iteritems():
