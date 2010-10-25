@@ -36,6 +36,11 @@ echo "export %ENV%" >> ~root/.bashrc
 HADOOP_VERSION=${HADOOP_VERSION:-0.20.1}
 HADOOP_HOME=/usr/local/hadoop-$HADOOP_VERSION
 HADOOP_CONF_DIR=$HADOOP_HOME/conf
+
+PIG_VERSION=${PIG_VERSION:-0.7.0}
+PIG_HOME=/usr/local/pig-$PIG_VERSION
+PIG_CONF_DIR=$PIG_HOME/conf
+
 SELF_HOST=`wget -q -O - http://169.254.169.254/latest/meta-data/public-hostname`
 for role in $(echo "$ROLES" | tr "," "\n"); do
   case $role in
@@ -114,6 +119,36 @@ function install_hadoop() {
 
   echo "export HADOOP_HOME=$HADOOP_HOME" >> ~root/.bashrc
   echo 'export PATH=$JAVA_HOME/bin:$HADOOP_HOME/bin:$PATH' >> ~root/.bashrc
+}
+
+function install_pig()
+{
+  pig_tar_url=http://mirror.cloudera.com/apache/hadoop/pig/pig-$PIG_VERSION/pig-$PIG_VERSION.tar.gz
+  pig_tar_file=`basename $pig_tar_url`
+
+  curl="curl --retry 3 --silent --show-error --fail"
+  for i in `seq 1 3`;
+  do
+    $curl -O $pig_tar_url
+  done
+
+  if [ ! -e $pig_tar_file ]; then
+    echo "Failed to download $pig_tar_url. Aborting."
+    exit 1
+  fi
+
+  tar zxf $pig_tar_file -C /usr/local
+  rm -f $pig_tar_file
+  
+  if [ ! -e $HADOOP_CONF_DIR ]; then
+    echo "Hadoop must be installed.  Aborting."
+    exit 1
+  fi
+  
+  cp $HADOOP_CONF_DIR/*.xml $PIG_CONF_DIR/
+
+  echo "export PIG_HOME=$PIG_HOME" >> ~root/.bashrc
+  echo 'export PATH=$JAVA_HOME/bin:$PIG_HOME/bin:$PATH' >> ~root/.bashrc
 }
 
 function prep_disk() {
@@ -373,7 +408,7 @@ function configure_hadoop() {
 </property>
 <property>
   <name>mapred.reduce.tasks</name>
-  <value>10</value>
+  <value>$CLUSTER_SIZE</value>
 </property>
 <property>
   <name>mapred.reduce.tasks.speculative.execution</name>
@@ -540,6 +575,7 @@ register_auto_shutdown
 install_user_packages
 install_hadoop
 configure_hadoop
+install_pig
 
 for role in $(echo "$ROLES" | tr "," "\n"); do
   case $role in
