@@ -137,10 +137,16 @@ done
 EOF
 
   case $INSTANCE_TYPE in
-  m1.xlarge|c1.xlarge)
+  m1.xlarge|m2.xlarge)
     cat >> $SETTINGS_FILE <<EOF
 # Arguments to pass to the JVM
 JVM_OPTS="-ea -Xms10G -Xmx10G -XX:+UseParNewGC -XX:+UseConcMarkSweepGC -XX:+CMSParallelRemarkEnabled -XX:SurvivorRatio=8 -XX:MaxTenuringThreshold=1 -XX:+HeapDumpOnOutOfMemoryError -Dcom.sun.management.jmxremote.port=8080 -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.authenticate=false"
+EOF
+    ;;
+  m1.large|c1.xlarge)
+    cat >> $SETTINGS_FILE <<EOF
+# Arguments to pass to the JVM
+JVM_OPTS="-ea -Xms5G -Xmx5G -XX:+UseParNewGC -XX:+UseConcMarkSweepGC -XX:+CMSParallelRemarkEnabled -XX:SurvivorRatio=8 -XX:MaxTenuringThreshold=1 -XX:+HeapDumpOnOutOfMemoryError -Dcom.sun.management.jmxremote.port=8080 -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.authenticate=false"
 EOF
     ;;
   *)
