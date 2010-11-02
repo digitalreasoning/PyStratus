@@ -249,22 +249,23 @@ def check_launch_options_set(cluster, options):
     if options.get('ami') is None and options.get('image_id') is None:
       print "One of ami or image_id must be specified. Aborting."
       sys.exit(1)
-    if options.get('storage_conf_file') is not None:
-        try:
-            url = urllib.urlopen(options.get('storage_conf_file'))
-            data = url.read()
 
-            for section in SUBSTITUTIONS:
-                if data.find(section) == -1:
-                    print "Storage conf file must contain '%%%s%%' for variable. Aborting." % section
-                    sys.exit(1)
-
-        except: 
-            print "The file defined by storage_conf_file (%s) does not exist. Aborting." % options.get('storage_conf_file')
-            sys.exit(1)
-    else:
-        print "ERROR: No storage_conf_file configured. Aborting."
+    if options.get('cassandra_config_file') is None:
+        print "ERROR: No cassandra_config_file configured. Aborting."
         sys.exit(1)
+
+    if options.get('keyspace_definitions_file') is None:
+        print "WARNING: No keyspace_definitions_file configured. You can ignore this for Cassandra v0.6.x"
+
+    # test files
+    for key in ['cassandra_config_file', 'keyspace_definitions_file']:
+        if options.get(key) is not None:
+            try:
+                url = urllib.urlopen(options.get(key))
+                data = url.read()
+            except: 
+                print "The file defined by %s (%s) does not exist. Aborting." % (key, options.get(key))
+                sys.exit(1)
     check_options_set(options, ['key_name'])
   else:
     check_options_set(options, ['image_id', 'public_key'])
@@ -329,7 +330,8 @@ def execute(command=None, argv=[]):
     service.launch_cluster(instance_template, config_dir,
                            opt.get('client_cidr'), 
                            opt.get('ssh_options'),
-                           opt.get('storage_conf_file'))
+                           opt.get('cassandra_config_file'),
+                           opt.get('keyspace_definitions_file'))
 
   elif command == 'create-formatted-snapshot':
     (opt, args, service) = parse_options_and_config(command, argv, SNAPSHOT_OPTIONS,

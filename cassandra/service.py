@@ -37,6 +37,24 @@ import subprocess
 import sys
 import time
 import tempfile
+import urllib
+import urlparse
+
+from yaml import load as parse_yaml
+from yaml import dump as dump_yaml
+
+try:
+    from cElementTree import parse as parse_xml
+    from cElementTree import tostring as dump_xml
+    from cElementTree import Element
+except:
+    print "*"*80
+    print "WARNING: cElementTree module does not exist. Defaulting to elementtree instead."
+    print "It's recommended that you install the cElementTree module for faster XML parsing."
+    print "*"*80
+    from elementtree.ElementTree import parse as parse_xml
+    from elementtree.ElementTree import parse as parse_xml
+    from elementtree.ElementTree import Element
 
 logger = logging.getLogger(__name__)
 
@@ -77,47 +95,136 @@ class CassandraService(Service):
 
   def get_running_instances(self):
     return self.cluster.get_instances_in_role(CASSANDRA_NODE, "running")
-  
-  def _transfer_storage_conf_files(self, ssh_options, storage_conf_file, instances=None):
 
-    # skip the transfer of the storage conf file because the user chose not
-    # to supply one in the configuration. the user has already been warned
-    # and has explicitly chosen to continue without one.
-    if storage_conf_file is None:
-        return
+  def _modify_config_file(self, config_file, seed_ips, token):
+    # XML (0.6.x) 
+    if config_file.endswith(".xml"):
+        remote_file = "storage-conf.xml"
+
+        xml = parse_xml(urllib.urlopen(config_file)).getroot()
+
+        #  Seeds
+        seeds = xml.find("Seeds")
+        if seeds is not None:
+            while seeds.getchildren():
+                seeds.remove(seeds.getchildren()[0])
+        else:
+            seeds = Element("Seeds")
+            xml.append(seeds)
+
+        for seed_ip in seed_ips:
+            seed = Element("Seed")
+            seed.text = seed_ip
+            seeds.append(seed)
+
+        # Initial token
+        initial_token = xml.find("InitialToken")
+        if initial_token is None:
+            initial_token = Element("InitialToken")
+            xml.append(initial_token)
+        initial_token.text = token
+
+        # Logs
+        commit_log_directory = xml.find("CommitLogDirectory")
+        if commit_log_directory is None:
+            commit_log_directory = Element("CommitLogDirectory")
+            xml.append(commit_log_directory)
+        commit_log_directory.text = "/mnt/cassandra-logs"
+
+        # Data 
+        data_file_directories = xml.find("DataFileDirectories")
+        if data_file_directories is not None:
+            while data_file_directories.getchildren():
+                data_file_directories.remove(data_file_directories.getchildren()[0])
+        else:
+            data_file_directories = Element("DataFileDirectories")
+            xml.append(data_file_directories)
+        data_file_directory = Element("DataFileDirectory")
+        data_file_directory.text = "/mnt/cassandra-data"
+        data_file_directories.append(data_file_directory)
+
+
+        # listen address
+        listen_address = xml.find("ListenAddress")
+        if listen_address is None:
+            listen_address = Element("ListenAddress")
+            xml.append(listen_address)
+        listen_address.text = ""
+
+        # thrift address
+        thrift_address = xml.find("ThriftAddress")
+        if thrift_address is None:
+            thrift_address = Element("ThriftAddress")
+            xml.append(thrift_address)
+        thrift_address.text = ""
+
+        fd, temp_file = tempfile.mkstemp(prefix='storage-conf.xml_', text=True)
+        os.write(fd, dump_xml(xml))
+        os.close(fd)
+        
+    # YAML (0.7.x)
+    elif config_file.endswith(".yaml"):
+        remote_file = "cassandra.yaml"
+
+        yaml = parse_yaml(urllib.urlopen(config_file))
+        yaml['seeds'] = seed_ips
+        yaml['initial_token'] = token
+        yaml['data_file_directories'] = ['/mnt/cassandra-data']
+        yaml['commitlog_directory'] = '/mnt/cassandra-logs'
+        yaml['listen_address'] = None
+        yaml['rpc_address'] = None
+
+        fd, temp_file = tempfile.mkstemp(prefix='cassandra.yaml_', text=True)
+        os.write(fd, dump_yaml(yaml))
+        os.close(fd)
+    else:
+        raise Exception("Configuration file must be one of xml or yaml") 
+
+    return temp_file, remote_file
+  
+  def _transfer_config_files(self, ssh_options, config_file, keyspace_file=None, instances=None):
 
     if instances is None:
         instances = self._get_node_instances()
 
-    print "Waiting for %d Cassandra instances to install..." % len(instances)
+    print "Waiting for %d Cassandra instance(s) to install..." % len(instances)
     for instance in instances:
         self._wait_for_cassandra_install(instance, ssh_options)
     print ""
 
-    print "Copying storage-conf.xml files to %d Cassandra instances..." % len(instances)
+    print "Copying configuration files to %d Cassandra instances..." % len(instances)
 
-    # every node will have the same seeds
-    seeds = "".join(["<Seed>%s</Seed>" % (instance.private_ip,) for instance in instances[:2]])
-    seeds_replacement = "<Seeds>%s</Seeds>" % seeds
+    seed_ips = [str(instance.private_ip) for instance in instances[:2]]
+    tokens = self._get_evenly_spaced_tokens_for_n_instances(len(instances))
 
-    # each node will have a different initial token calculated
-    initial_tokens = self._get_evenly_spaced_tokens_for_n_instances(len(instances))
-    initial_token_replacement = "<InitialToken>%d</InitialToken>"
-
+    # for each instance, generate a config file from the original file and upload it to
+    # the cluster node
     for i in range(len(instances)):
-        replacements = { 
-            "%SEEDS%": seeds_replacement,
-            "%INITIAL_TOKEN%": initial_token_replacement % initial_tokens[i]
-        }
-        data = InstanceUserData(storage_conf_file, replacements)
-        fd, fp = tempfile.mkstemp(prefix="storage-conf.xml_", text=True)
-        os.write(fd, data.read())
-        os.close(fd)
-        scp_command = 'scp %s -r %s root@%s:/usr/local/apache-cassandra/conf/storage-conf.xml' % (xstr(ssh_options),
-                                                 fp, instances[i].public_ip)
+        local_file, remote_file = self._modify_config_file(config_file, seed_ips, str(tokens[i]))
 
+        # Upload modified config file
+        scp_command = 'scp %s -r %s root@%s:/usr/local/apache-cassandra/conf/%s' % (xstr(ssh_options),
+                                                 local_file, instances[i].public_ip, remote_file)
         subprocess.call(scp_command, shell=True)
-        os.unlink(fp)
+
+        # delete temporary file
+        os.unlink(local_file)
+
+    if keyspace_file:
+        keyspace_data = urllib.urlopen(keyspace_file).read()
+        fd, temp_keyspace_file = tempfile.mkstemp(prefix="keyspaces.txt_", text=True)
+        os.write(fd, keyspace_data)
+        os.close(fd)
+
+        print "\nCopying keyspace definition file to 1 Cassandra instance..."
+
+        # Upload keyspace definitions file
+        scp_command = 'scp %s -r %s root@%s:/usr/local/apache-cassandra/conf/keyspaces.txt' % (xstr(ssh_options),
+                                                                           temp_keyspace_file, instances[0].public_ip)
+        subprocess.call(scp_command, shell=True)
+
+        os.unlink(temp_keyspace_file)
+
 
   def _get_evenly_spaced_tokens_for_n_instances(self, n):
     return [i*(2**127/n) for i in range(1,n+1)]
@@ -145,15 +252,64 @@ class CassandraService(Service):
     if instances is None:
         instances = self._get_node_instances()
 
-    print "Starting Cassandra service on %d instance(s)..." % len(instances)
+    print "\nStarting Cassandra service on %d instance(s)..." % len(instances)
 
     for instance in instances:
         command = "nohup /usr/local/apache-cassandra/bin/cassandra -p /root/cassandra.pid &> /root/cassandra.out &"
         ssh_command = self._get_standard_ssh_command(instance, ssh_options, command)
         subprocess.call(ssh_command, shell=True)
+
+    # test connection
+    timeout = 0
+    i = 0
+    while i < len(instances):
+        command = "/usr/local/apache-cassandra/bin/nodetool -h %s info" % instances[i].private_ip
+        ssh_command = self._get_standard_ssh_command(instances[i], ssh_options, command)
+
+        while True:
+            retcode = subprocess.call(ssh_command, shell=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+            if retcode == 0:
+                i += 1
+                break
+            sys.stdout.write(".")
+            sys.stdout.flush()
+            timeout += 1
+
+            # TODO: Set constant somewhere for timeouts?
+            if timeout >= 5:
+                raise Exception("Timeout occurred while waiting for Cassandra services to start...")
+
+    self._create_keyspaces_from_definitions_file(instances[0], ssh_options)
     
-    time.sleep(len(instances)*3)
+    # TODO: Do I need to wait for the keyspaces to propagate before printing the ring?
+    # print ring after everything started
     self.print_ring(ssh_options, instances[0])
+
+  def _create_keyspaces_from_definitions_file(self, instance, ssh_options):
+    # TODO: Keyspaces could already exist...how do I check this?
+    # TODO: Can it be an arbitrary node?
+
+    # test for the keyspace file first
+    command = "ls /usr/local/apache-cassandra/conf/keyspaces.txt"
+    ssh_command = self._get_standard_ssh_command(instance, ssh_options, command)
+    retcode = subprocess.call(ssh_command, shell=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+
+    if retcode != 0:
+        # no keyspace definition file 
+        return
+
+    print "Creating keyspaces using Thrift API via keyspaces_definitions_file..."
+
+    command = "/usr/local/apache-cassandra/bin/cassandra-cli --host %s --batch < /usr/local/apache-cassandra/conf/keyspaces.txt" % instance.private_ip
+    ssh_command = self._get_standard_ssh_command(instance, ssh_options, command)
+    retcode = subprocess.call(ssh_command, shell=True)#stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+
+    # remove keyspace file
+    command = "rm -rf /usr/local/apache-cassandra/conf/keyspaces.txt"
+    ssh_command = self._get_standard_ssh_command(instance, ssh_options, command)
+    subprocess.call(ssh_command, shell=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+
+    
 
   def stop_cassandra(self, ssh_options, instances=None):
     if instances is None:
@@ -170,20 +326,20 @@ class CassandraService(Service):
     if instance is None:
       instance = self.get_running_instances()[0]
 
-    print "Ring configuration..."
+    print "\nRing configuration..."
     command = "/usr/local/apache-cassandra/bin/nodetool -h localhost ring"
     ssh_command = self._get_standard_ssh_command(instance, ssh_options, command)
     subprocess.call(ssh_command, shell=True)
-    
+
   """
   NOTE: Only a single instance template for CassandraService
   """
-  def launch_cluster(self, instance_template, config_dir, client_cidr, ssh_options, storage_conf_file):
+  def launch_cluster(self, instance_template, config_dir, client_cidr, ssh_options, config_file, keyspace_file=None):
     roles = instance_template.roles
 
     instances = self._launch_cluster_instances(instance_template)
     self._attach_storage(roles)
-    self._transfer_storage_conf_files(ssh_options, storage_conf_file, instances=instances)
+    self._transfer_config_files(ssh_options, config_file, keyspace_file, instances=instances)
     self.start_cassandra(ssh_options, instances=instances)
 
   def login(self, ssh_options):

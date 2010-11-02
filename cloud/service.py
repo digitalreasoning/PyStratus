@@ -387,6 +387,7 @@ PERMANENTLY DELETE ALL DATA"):
         print "******************"
 
     print "Waiting for %s instance(s) to start: %s" % (it.number, ", ".join(instance_ids))
+    time.sleep(1)
 
     try:
       self.cluster.wait_for_instances(instance_ids)
