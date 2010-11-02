@@ -6,12 +6,14 @@ but we hope to add new cloud providers very soon.
 
 To get up and running quickly you need the following:
 
-* Python 2.6+
+* Python 2.5+
 * boto 
 * simplejson
 * prettytable
 * setuptools
 * dateutil
+* PyYAML
+* cElementTree or elementree
 
 You can install the modules from above with easy_install (http://pypi.python.org/pypi/setuptools)
 
