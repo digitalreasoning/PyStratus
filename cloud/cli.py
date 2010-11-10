@@ -347,7 +347,6 @@ def handleListAllCommand(rows, config_dir, region, defined_clusters=[]):
       for name in cluster_names:
         if name in defined_clusters:
           continue
-        print name
         cluster = get_cluster(cloud_provider)(name, config_dir, region)
         service = get_service(service_type, cloud_provider)(cluster)
         running_instances = service.get_running_instances()
