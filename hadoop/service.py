@@ -56,12 +56,12 @@ class HadoopService(Service):
   def get_service_code(self):
     return "hadoop"
 
-  def get_clusters_for_provider(self, provider):
+  def get_clusters_for_provider(self, provider, region):
     """
     Find and return clusters that have a running namenode instance
     """
-    legacy_clusters = get_cluster(provider).get_clusters_with_role(MASTER)
-    clusters = get_cluster(provider).get_clusters_with_role(NAMENODE)
+    legacy_clusters = get_cluster(provider).get_clusters_with_role(MASTER, region=region)
+    clusters = get_cluster(provider).get_clusters_with_role(NAMENODE, region=region)
     clusters.extend(legacy_clusters)
     return clusters
     

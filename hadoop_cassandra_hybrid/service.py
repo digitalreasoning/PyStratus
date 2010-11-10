@@ -61,11 +61,11 @@ class HadoopCassandraHybridService(Service):
   def get_service_code(self):
     return "hadoop"
 
-  def get_clusters_for_provider(self, provider):
+  def get_clusters_for_provider(self, provider, region):
     """
     Find and return clusters that have a running namenode instance
     """
-    clusters = get_cluster(provider).get_clusters_with_role(HADOOP_CASSANDRA_NODE)
+    clusters = get_cluster(provider).get_clusters_with_role(HADOOP_CASSANDRA_NODE, region=region)
     return clusters
     
   def list_all(self, provider):

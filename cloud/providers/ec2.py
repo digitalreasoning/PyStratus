@@ -207,7 +207,8 @@ class Ec2Cluster(Cluster):
       instances.append(Instance(instance.id, role, instance.dns_name,
                                 instance.private_dns_name, 
                                 instance.launch_time,
-                                instance.instance_type))
+                                instance.instance_type,
+                                instance.placement))
     return instances
 
   def _print_instance(self, role, instance):

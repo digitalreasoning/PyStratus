@@ -72,11 +72,11 @@ class CassandraService(Service):
   def get_service_code(self):
     return "cassandra"
 
-  def get_clusters_for_provider(self, provider):
+  def get_clusters_for_provider(self, provider, region):
     """
     Find and return clusters that have running a cassandra instance
     """
-    return get_cluster(provider).get_clusters_with_role(CASSANDRA_NODE)
+    return get_cluster(provider).get_clusters_with_role(CASSANDRA_NODE, region=region)
     
   def list_all(self, provider):
     """

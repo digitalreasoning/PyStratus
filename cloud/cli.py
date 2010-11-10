@@ -64,6 +64,7 @@ BASIC_OPTIONS = [
 
 LIST_OPTIONS = [
   CONFIG_DIR_OPTION,
+  REGION_OPTION,
   make_option("--override", action="store_true", default=False),
   make_option("--all", action="store_true", default=False, 
               help="list all clusters (defined or not)"),
@@ -242,10 +243,9 @@ def getSortAndReverseOptions(opt, defaultSort="Size", defaultReverse=True):
 
 def handleListStorage(command):
     (opt, args, _) = parse_options_for_clusters(command, SORT_OPTIONS)
-
     (sort, reverse) = getSortAndReverseOptions(opt)
-
-    ec2 = get_ec2_connection(opt.get('region'))
+    region = opt.get('region')
+    ec2 = get_ec2_connection(region)
 
     table = PrettyTable()
     table.set_field_names(["Volume Id", "Size", "Snapshot Id", "Availability Zone", "Status", "Create Time"])
@@ -258,7 +258,7 @@ def handleListStorage(command):
 
     try:
         table.printt(sortby=sort, reversesort=reverse)
-        print "Total volumes: %d" % len(table.rows)
+        print "Total volumes in region '%s': %d" % (region, len(table.rows))
         print "Total size:    %d (GB)" % s
     except ValueError, e:
         print "Sort error: %s" % str(e)
@@ -279,6 +279,7 @@ def handleListClusterDetails(cluster_name, config_dir):
 def handleListClusters(command):
     (opt, args, defined_clusters) = parse_options_for_clusters(command, LIST_OPTIONS)
     config_dir = get_config_dir(opt)
+    region = opt.get('region', DEFAULT_REGION)
 
     if len(args) > 0:
       handleListClusterDetails(args[0], config_dir)
@@ -288,30 +289,31 @@ def handleListClusters(command):
     for (cluster_name, params) in defined_clusters.iteritems():
       cloud_provider = params['cloud_provider']
       service_type = params['service_type']
-      cluster = get_cluster(cloud_provider)(cluster_name, config_dir)
+      cluster = get_cluster(cloud_provider)(cluster_name, config_dir, region)
       service = get_service(service_type, cloud_provider)(cluster)
 
       running_instances = service.get_running_instances()
       total_time = getTotalClusterRunningTime(running_instances)
       instance_type = running_instances[0].instance_type if running_instances else "N/A"
+      zone = running_instances[0].zone if running_instances else "N/A"
       rows.append([cluster_name, service_type, cloud_provider, len(running_instances), 
-                   total_time, instance_type, "*"])
+                   total_time, instance_type, zone, "*"])
 
     if opt['all'] == True:
-      handleListAllCommand(rows, config_dir, defined_clusters.keys())
+      handleListAllCommand(rows, config_dir, region, defined_clusters.keys())
 
     rows.sort(key = lambda x: x[3], reverse=True)
 
     table = PrettyTable()
     table.set_field_names(("", "Cluster Name", "Service", "Cloud Provider", "Instances", 
-                           "Cluster Time (hrs)", "Instance Type", "Defined"))
+                           "Cluster Time (hrs)", "Instance Type", "Zone", "Defined"))
 
     for i in xrange(len(rows)):
         rows[i].insert(0, i+1)
         table.add_row(rows[i])
 
     table.printt()
-    print "Running instances: %d" % sum(map(lambda x: x[4], table.rows))
+    print "Running instances in region '%s': %d" % (region, sum(map(lambda x: x[4], table.rows)))
 
     while True:
       try:
@@ -335,22 +337,24 @@ def handleListClusters(command):
         print
         return
 
-def handleListAllCommand(rows, config_dir, defined_clusters=[]):
+def handleListAllCommand(rows, config_dir, region, defined_clusters=[]):
 
   for (service_type, providers) in SERVICE_PROVIDER_MAP.iteritems():
     for cloud_provider in providers:
       service = get_service(service_type, cloud_provider)(None)
-      cluster_names = service.get_clusters_for_provider(cloud_provider)
+      cluster_names = service.get_clusters_for_provider(cloud_provider, region)
 
       for name in cluster_names:
         if name in defined_clusters:
           continue
-        cluster = get_cluster(cloud_provider)(name, config_dir)
+        print name
+        cluster = get_cluster(cloud_provider)(name, config_dir, region)
         service = get_service(service_type, cloud_provider)(cluster)
         running_instances = service.get_running_instances()
         total_time = getTotalClusterRunningTime(running_instances)
         instance_type = running_instances[0].instance_type if running_instances else "N/A"
-        rows.append([name, service_type, cloud_provider, len(running_instances), total_time, instance_type, ""])
+        zone = running_instances[0].zone if running_instances else "N/A"
+        rows.append([name, service_type, cloud_provider, len(running_instances), total_time, instance_type, zone, ""])
 
 def getTotalClusterRunningTime(instances):
   now = datetime.utcnow()
