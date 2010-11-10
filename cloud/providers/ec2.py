@@ -13,7 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from boto.ec2.connection import EC2Connection
 from boto.exception import EC2ResponseError
 from cloud.cluster import Cluster
 from cloud.cluster import Instance
@@ -24,6 +23,7 @@ from cloud.storage import JsonVolumeSpecManager
 from cloud.storage import MountableVolume
 from cloud.storage import Storage
 from cloud.util import xstr
+from cloud.util import get_ec2_connection
 from prettytable import PrettyTable
 import logging
 import os
@@ -65,8 +65,8 @@ class Ec2Cluster(Cluster):
   """
 
   @staticmethod
-  def get_clusters_with_role(role, state="running"):
-    all_instances = EC2Connection().get_all_instances()
+  def get_clusters_with_role(role, state="running", region="us-east-1"):
+    all_instances = get_ec2_connection(region).get_all_instances()
     clusters = []
     for res in all_instances:
       instance = res.instances[0]
@@ -75,9 +75,10 @@ class Ec2Cluster(Cluster):
           clusters.append(re.sub("-%s$" % re.escape(role), "", group.id))
     return clusters
 
-  def __init__(self, name, config_dir):
-    super(Ec2Cluster, self).__init__(name, config_dir)
-    self.ec2Connection = EC2Connection()
+  def __init__(self, name, config_dir, region):
+    super(Ec2Cluster, self).__init__(name, config_dir, region)
+
+    self.ec2Connection = get_ec2_connection(region)
 
   def get_provider_code(self):
     return "ec2"

@@ -35,6 +35,7 @@ import sys
 
 from cloud.cli import DEFAULT_CONFIG_DIR_NAME
 from cloud.cli import CONFIG_FILENAME
+from cloud.cli import DEFAULT_REGION
 
 DEFAULT_SERVICE_NAME = 'hadoop'
 DEFAULT_CLOUD_PROVIDER = 'ec2'
@@ -49,14 +50,22 @@ PROVIDER_OPTION = \
   make_option("--cloud-provider", metavar="PROVIDER",
     help="The cloud provider, e.g. 'ec2' for Amazon EC2.")
 
+AVAILABILITY_ZONE_OPTION = \
+  make_option("-z", "--availability-zone", metavar="ZONE",
+    help="The availability zone to run the instances in.")
+
+REGION_OPTION = \
+  make_option("-r", "--region", metavar="REGION",
+    help="The region run the instances in.")
+
 BASIC_OPTIONS = [
   CONFIG_DIR_OPTION,
   PROVIDER_OPTION,
+  AVAILABILITY_ZONE_OPTION,
+  REGION_OPTION,
 ]
 
-LAUNCH_OPTIONS = [
-  CONFIG_DIR_OPTION,
-  PROVIDER_OPTION,
+LAUNCH_OPTIONS = BASIC_OPTIONS[:] + [
   make_option("-a", "--ami", metavar="AMI",
     help="The AMI ID of the image to launch. (Amazon EC2 only. Deprecated, use \
 --image-id.)"),
@@ -76,8 +85,6 @@ up."),
   make_option("-t", "--instance-type", metavar="TYPE",
     help="The type of instance to be launched. One of m1.small, m1.large, \
 m1.xlarge, c1.medium, or c1.xlarge."),
-  make_option("-z", "--availability-zone", metavar="ZONE",
-    help="The availability zone to run the instances in."),
   make_option("--auto-shutdown", metavar="TIMEOUT_MINUTES",
     help="The time in minutes after launch when an instance will be \
 automatically shut down."),
@@ -92,34 +99,19 @@ should be run. (Amazon EC2 only.) (May be specified multiple times.)"),
 providers only.)"),
 ]
 
-SNAPSHOT_OPTIONS = [
-  CONFIG_DIR_OPTION,
-  PROVIDER_OPTION,
+SNAPSHOT_OPTIONS = BASIC_OPTIONS[:] + [
   make_option("-k", "--key-name", metavar="KEY-PAIR",
     help="The key pair to use when launching instances."),
-  make_option("-z", "--availability-zone", metavar="ZONE",
-    help="The availability zone to run the instances in."),
   make_option("--ssh-options", metavar="SSH-OPTIONS",
     help="SSH options to use."),
 ]
 
-PLACEMENT_OPTIONS = [
-  CONFIG_DIR_OPTION,
-  PROVIDER_OPTION,
-  make_option("-z", "--availability-zone", metavar="ZONE",
-    help="The availability zone to run the instances in."),
-]
-
-FORCE_OPTIONS = [
-  CONFIG_DIR_OPTION,
-  PROVIDER_OPTION,
+FORCE_OPTIONS = BASIC_OPTIONS[:] + [
   make_option("--force", action="store_true", default=False,
   help="Do not ask for confirmation."),
 ]
 
-SSH_OPTIONS = [
-  CONFIG_DIR_OPTION,
-  PROVIDER_OPTION,
+SSH_OPTIONS = BASIC_OPTIONS[:] + [
   make_option("--ssh-options", metavar="SSH-OPTIONS",
     help="SSH options to use."),
 ]
@@ -197,7 +189,8 @@ def parse_options_and_config(command, argv, option_list=[], extra_arguments=(),
   logging.debug("Options: %s", str(opt))
   service_name = get_service_name(opt)
   cloud_provider = get_cloud_provider(opt)
-  cluster = get_cluster(cloud_provider)(cluster_name, config_dir)
+  cluster = get_cluster(cloud_provider)(cluster_name, config_dir,
+                                        opt.get("region", DEFAULT_REGION))
   service = get_service(service_name, cloud_provider)(cluster)
   return (opt, args, service)
 
@@ -396,7 +389,7 @@ def execute(command=None, argv=[]):
     service.list_storage()
 
   elif command == 'create-storage':
-    (opt, args, service) = parse_options_and_config(command, argv, PLACEMENT_OPTIONS,
+    (opt, args, service) = parse_options_and_config(command, argv, BASIC_OPTIONS,
                                                     ("ROLE", "NUM_INSTANCES",
                                                      "SPEC_FILE"))
 

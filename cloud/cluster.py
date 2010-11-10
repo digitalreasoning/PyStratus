@@ -43,9 +43,10 @@ class Cluster(object):
   One may launch instances which run in a certain role.
   """
 
-  def __init__(self, name, config_dir):
+  def __init__(self, name, config_dir, region):
     self.name = name
     self.config_dir = config_dir
+    self.region = region
 
   def get_provider_code(self):
     """

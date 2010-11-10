@@ -104,7 +104,7 @@ class HadoopCassandraHybridService(Service):
     self._attach_storage(instance_template.roles)
     self._print_master_url()
       
-  def launch_cluster(self, instance_templates, config_dir, client_cidr, ssh_options, storage_conf_file):
+  def launch_cluster(self, instance_templates, config_dir, client_cidr, ssh_options, config_file, keyspace_file=None):
     number_of_tasktrackers = 0
     roles = []
     for it in instance_templates:
@@ -125,7 +125,7 @@ class HadoopCassandraHybridService(Service):
     # cassandra specific instances and setup
     cassandra_instances = self.cluster.get_instances_in_role(DATANODE, "running")
     cs = CassandraService(self.cluster)
-    cs._transfer_storage_conf_files(ssh_options, storage_conf_file, instances=cassandra_instances)
+    cs._transfer_config_files(ssh_options, config_file, keyspace_file, instances=cassandra_instances)
     cs.start_cassandra(ssh_options, instances=cassandra_instances)
 
     self._print_master_url()

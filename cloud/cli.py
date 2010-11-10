@@ -16,12 +16,12 @@
 from __future__ import with_statement
 
 import ConfigParser
-from boto.ec2.connection import EC2Connection
 from cloud import VERSION
 from cloud.cluster import get_cluster
 from cloud.service import get_service
 from cloud.service import InstanceTemplate
 from cloud.settings import SERVICE_PROVIDER_MAP
+from cloud.util import get_ec2_connection
 from cloud.util import merge_config_with_options
 from cloud.util import get_all_cluster_names_from_config_file 
 from cloud.util import xstr
@@ -40,6 +40,7 @@ import simplejson
 
 DEFAULT_SERVICE_NAME = 'cassandra'
 DEFAULT_CLOUD_PROVIDER = 'ec2'
+DEFAULT_REGION = 'us-east-1'
 
 DEFAULT_CONFIG_DIR_NAME = '.stratus'
 DEFAULT_CONFIG_DIR = os.path.join(os.environ['HOME'], DEFAULT_CONFIG_DIR_NAME)
@@ -53,6 +54,10 @@ CONFIG_DIR_OPTION = \
   make_option("--config-dir", metavar="CONFIG-DIR",
     help="The configuration directory.")
 
+REGION_OPTION = \
+  make_option("-r", "--region", metavar="REGION", default=DEFAULT_REGION,
+    help="The region run the instances in.")
+
 BASIC_OPTIONS = [
   CONFIG_DIR_OPTION,
 ]
@@ -65,8 +70,9 @@ LIST_OPTIONS = [
 ]
 
 SORT_OPTIONS = [
+  REGION_OPTION,
   make_option("-s", "--sort", metavar="COLUMN_NAME", help="Sort by COLUMN_NAME"),
-  make_option("-r", "--reverse", metavar="REVERSE", help="Reverse sort order (true|false)"),
+  make_option("--reverse", action="store_true", default=False, metavar="REVERSE", help="Reverse sort order"),
 ]
 
 def print_usage(script):
@@ -230,14 +236,6 @@ def getSortAndReverseOptions(opt, defaultSort="Size", defaultReverse=True):
         sort = defaultSort
 
     reverse = opt.get('reverse')
-    if reverse is None:
-        reverse = defaultReverse
-    elif reverse.lower() in ["true", "t"]:
-        reverse = True
-    elif reverse.lower() in ["false", "f"]:
-        reverse = False
-    else:
-        reverse = defaultReverse
 
     return (sort, reverse)
     
@@ -247,7 +245,7 @@ def handleListStorage(command):
 
     (sort, reverse) = getSortAndReverseOptions(opt)
 
-    ec2 = EC2Connection()
+    ec2 = get_ec2_connection(opt.get('region'))
 
     table = PrettyTable()
     table.set_field_names(["Volume Id", "Size", "Snapshot Id", "Availability Zone", "Status", "Create Time"])
