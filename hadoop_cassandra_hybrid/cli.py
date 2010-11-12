@@ -419,10 +419,20 @@ def execute(command=None, argv=[]):
                                                     ("SIZE",))
     size = int(args[1])
     check_options_set(opt, ['availability_zone', 'key_name'])
-    ami_ubuntu_intrepid_x86 = 'ami-ec48af85' # use a general AMI
+
+    region = opt.get('region')
+
+    if region == 'us-east-1':
+        ami = 'ami-ec48af85'
+    elif region == 'us-west-1':
+        ami = 'ami-257a2b60'
+    else:
+        # FIXME: Map all regions
+        raise Exception("Region supplied (%s) does not have a corresponding AMI.")
+
     service.create_formatted_snapshot(size,
                                          opt.get('availability_zone'),
-                                         ami_ubuntu_intrepid_x86,
+                                         ami,
                                          opt.get('key_name'),
                                          xstr(opt.get('ssh_options')))
 
