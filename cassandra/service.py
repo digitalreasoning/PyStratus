@@ -96,7 +96,7 @@ class CassandraService(Service):
   def get_running_instances(self):
     return self.cluster.get_instances_in_role(CASSANDRA_NODE, "running")
 
-  def _modify_config_file(self, config_file, seed_ips, token):
+  def _modify_config_file(self, instance, config_file, seed_ips, token):
     # XML (0.6.x) 
     if config_file.endswith(".xml"):
         remote_file = "storage-conf.xml"
@@ -171,8 +171,8 @@ class CassandraService(Service):
         yaml['initial_token'] = token
         yaml['data_file_directories'] = ['/mnt/cassandra-data']
         yaml['commitlog_directory'] = '/mnt/cassandra-logs'
-        yaml['listen_address'] = ""
-        yaml['rpc_address'] = ""
+        yaml['listen_address'] = str(instance.private_ip)
+        yaml['rpc_address'] = str(instance.public_ip)
 
         fd, temp_file = tempfile.mkstemp(prefix='cassandra.yaml_', text=True)
         os.write(fd, dump_yaml(yaml))
@@ -200,7 +200,7 @@ class CassandraService(Service):
     # for each instance, generate a config file from the original file and upload it to
     # the cluster node
     for i in range(len(instances)):
-        local_file, remote_file = self._modify_config_file(config_file, seed_ips, str(tokens[i]))
+        local_file, remote_file = self._modify_config_file(instances[i], config_file, seed_ips, str(tokens[i]))
 
         # Upload modified config file
         scp_command = 'scp %s -r %s root@%s:/usr/local/apache-cassandra/conf/%s' % (xstr(ssh_options),
