@@ -367,11 +367,11 @@ def getTotalClusterRunningTime(instances):
 
   return sum([int(ceil(total_seconds(now - dateparser(i.launch_time.split(".")[0]))/3600.0)) for i in instances])
 
-def getServiceTypeAndCloudProvider(cluster_name):
+def getServiceTypeAndCloudProvider(cluster_name, region):
   for (service_type, providers) in SERVICE_PROVIDER_MAP.iteritems():
     for cloud_provider in providers:
       service = get_service(service_type, cloud_provider)(None)
-      cluster_names = service.get_clusters_for_provider(cloud_provider)
+      cluster_names = service.get_clusters_for_provider(cloud_provider, region)
       
       for name in cluster_names:
         if name == cluster_name:
@@ -380,7 +380,7 @@ def getServiceTypeAndCloudProvider(cluster_name):
     
 def handleClusterSpecificCommands(cluster_name, cluster_params, opt, args, config_dir):
   if cluster_params is None:
-    service_type, cloud_provider = getServiceTypeAndCloudProvider(cluster_name)
+    service_type, cloud_provider = getServiceTypeAndCloudProvider(cluster_name, opt.get('region', DEFAULT_REGION))
     if service_type is None or cloud_provider is None:
       print "Unable to lookup servie type or cloud provider for cluster: %s. Aborting." % cluster_name
       sys.exit(1)
