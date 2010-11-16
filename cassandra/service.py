@@ -171,8 +171,8 @@ class CassandraService(Service):
         yaml['initial_token'] = token
         yaml['data_file_directories'] = ['/mnt/cassandra-data']
         yaml['commitlog_directory'] = '/mnt/cassandra-logs'
-        yaml['listen_address'] = None
-        yaml['rpc_address'] = None
+        yaml['listen_address'] = ""
+        yaml['rpc_address'] = ""
 
         fd, temp_file = tempfile.mkstemp(prefix='cassandra.yaml_', text=True)
         os.write(fd, dump_yaml(yaml))
