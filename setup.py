@@ -23,9 +23,16 @@ setup(name='stratus',
       license = 'Apache License (2.0)',
       author = 'Abe Music - Digital Reasoning Systems, Inc. && Apache Hadoop Contributors',
       author_email = 'abe.music@digitalreasoning.com',
-
       packages=find_packages(),
-      include_package_data=True,
-      package_dir={'stratus':'.'},
+      package_dir={
+          'cassandra':'cassandra',
+          'hadoop':'hadoop',
+          'hadoop_cassandra_hybrid': 'hadoop_cassandra_hybrid',
+      },
+      package_data={
+          'cassandra': ['data/*.sh'],
+          'hadoop': ['data/*.sh'],
+          'hadoop_cassandra_hybrid': ['data/*.sh'],
+      },
       scripts=['stratus'],
 )
