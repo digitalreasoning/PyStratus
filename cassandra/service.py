@@ -53,7 +53,7 @@ except:
     print "It's recommended that you install the cElementTree module for faster XML parsing."
     print "*"*80
     from elementtree.ElementTree import parse as parse_xml
-    from elementtree.ElementTree import parse as parse_xml
+    from elementtree.ElementTree import tostring as dump_xml
     from elementtree.ElementTree import Element
 
 logger = logging.getLogger(__name__)

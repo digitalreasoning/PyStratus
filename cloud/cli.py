@@ -328,7 +328,7 @@ def handleListClusters(command):
           print "\nDetails for cluster: %s" % r[1]
 
           config_dir = get_config_dir(opt)
-          cluster = get_cluster(r[3])(r[1], config_dir)
+          cluster = get_cluster(r[3])(r[1], config_dir, region)
           service = get_service(r[2], r[3])(cluster)
           service.list()
       except ValueError:
