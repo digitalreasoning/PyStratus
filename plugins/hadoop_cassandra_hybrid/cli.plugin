@@ -1,0 +1,9 @@
+[Core]
+Name = hadoop_cassandra_hybrid
+Module = cli
+
+[Documentation]
+Author = Abe Music
+Website = http://github.com/digitalreasoning/PyStratus
+Description = A hybrid Hadoop/Cassandra CLI implementation for PyStratus
+

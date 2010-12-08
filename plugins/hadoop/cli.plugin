@@ -1,0 +1,9 @@
+[Core]
+Name = hadoop 
+Module = cli
+
+[Documentation]
+Author = Abe Music
+Website = http://github.com/digitalreasoning/PyStratus
+Description = A Hadoop CLI implementation for PyStratus
+
