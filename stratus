@@ -15,7 +15,463 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from cloud.cli import main
+import ConfigParser
+import logging
+import os
+import sys
+import logging
+import logging.config
+import boto
+
+from cloud.cluster import get_cluster
+from cloud.service import get_service
+from cloud.plugin import ServicePlugin, CLIPlugin
+from cloud.util import merge_config_with_options
+from cloud.util import get_ec2_connection
+from optparse import OptionParser
+from optparse import make_option
+from prettytable import PrettyTable
+from datetime import datetime
+from dateutil.parser import parse as dateparser
+from math import ceil
+from yapsy.PluginManager import PluginManager
+logging.config.fileConfig("logging.conf")
+
+from cloud import VERSION
+from cloud.settings import SERVICE_PROVIDER_MAP
+
+DEFAULT_CLOUD_PROVIDER = 'ec2'
+DEFAULT_REGION = 'us-east-1'
+DEFAULT_CONFIG_DIR = os.path.join(os.environ['HOME'], ".stratus")
+CONFIG_FILENAME = 'clusters.cfg'
+
+LIST_CLUSTERS_COLUMNS = [("Cluster Name", "name"), ("Service", "service"), ("Cloud Provider", "provider"),
+                         ("Num Instances", "instances"), ("Cluster Time (hrs)", "time"), ("Instance Type", "type"),
+                         ("Defined", None)]
+
+LIST_STORAGE_COLUMNS  = [("Volumne Id", "id"), ("Size", "size"), ("Snapshot Id", "snapshot"),
+                         ("Availability Zone", "zone"), ("Status", "status"), ("Create Time", "time")]
+
+CONFIG_DIR_OPTION = \
+  make_option("--config-dir", metavar="CONFIG-DIR",
+    help="The configuration directory.")
+
+PROVIDER_OPTION = \
+  make_option("--cloud-provider", metavar="PROVIDER",
+    help="The cloud provider, e.g. 'ec2' for Amazon EC2.")
+
+AVAILABILITY_ZONE_OPTION = \
+  make_option("-z", "--availability-zone", metavar="ZONE",
+    help="The availability zone to run the instances in.")
+
+REGION_OPTION = \
+  make_option("-r", "--region", 
+    metavar="REGION", help="The region run the instances in.")
+
+BASIC_OPTIONS = [
+  CONFIG_DIR_OPTION,
+  PROVIDER_OPTION,
+  AVAILABILITY_ZONE_OPTION,
+  REGION_OPTION,
+]
+
+LIST_CLUSTERS_OPTIONS = BASIC_OPTIONS[:] + [
+  make_option("--all", action="store_true", default=False, 
+              help="list all clusters (defined or not)"),
+  make_option("--sortby", action="store", default="instances", 
+              help="One of: %s" % ", ".join([c[1] for c in LIST_CLUSTERS_COLUMNS if c[1] is not None])),
+  make_option("--reverse", action="store_false", default=True,
+              help="Reverse the sorting of the table."),
+]
+
+LIST_STORAGE_OPTIONS = BASIC_OPTIONS[:] + [
+  make_option("--sortby", action="store", default="time", 
+              help="One of: %s" % ", ".join([c[1] for c in LIST_STORAGE_COLUMNS if c[1] is not None])),
+  make_option("--reverse", action="store_false", default=True,
+              help="Reverse the sorting of the table."),
+]
+
+SNAPSHOT_OPTIONS = BASIC_OPTIONS[:] + [
+  make_option("-i", "--image-id", metavar="IMAGE",
+    help="The AMI to use when launching instances"),
+  make_option("-k", "--key-name", metavar="KEY-PAIR",
+    help="The key pair to use when launching instances."),
+  make_option("-p", "--private-key", metavar="PRIVATE-KEY",
+    help="The private key for SSH commands."),
+  make_option("--ssh-options", metavar="SSH-OPTIONS",
+    help="SSH options to use."),
+]
+
+
+# load the service plugin based on the service type
+plugin_manager = PluginManager(categories_filter=dict(cli=CLIPlugin, service=ServicePlugin),
+                        directories_list=["plugins"], 
+                        plugin_info_ext="plugin")
+plugin_manager.locatePlugins()
+plugin_manager.loadPlugins()
+
+def parse_options_and_config(command, option_list=[], extra_arguments=(),
+                             unbounded_args=False):
+  """
+  Parse the arguments to command using the given option list, and combine with
+  any configuration parameters.
+
+  If unbounded_args is true then there must be at least as many extra arguments
+  as specified by extra_arguments (the first argument is always CLUSTER).
+  Otherwise there must be exactly the same number of arguments as
+  extra_arguments.
+  """
+  expected_arguments = ["CLUSTER",]
+  expected_arguments.extend(extra_arguments)
+  (options_dict, args) = parse_options(command, option_list, expected_arguments,
+                                       unbounded_args)
+
+  config_dir = get_config_dir(options_dict)
+  config_files = [os.path.join(config_dir, CONFIG_FILENAME)]
+  if 'config_dir' not in options_dict:
+    # if config_dir not set, then also search in current directory
+    config_files.insert(0, CONFIG_FILENAME)
+
+  config = ConfigParser.ConfigParser()
+  read_files = config.read(config_files)
+  logging.debug("Read %d configuration files: %s", len(read_files),
+                ", ".join(read_files))
+  cluster_name = args[0]
+  opt = merge_config_with_options(cluster_name, config, options_dict)
+
+  # add in the config_dir
+  if not opt.has_key('config_dir'):
+    opt['config_dir'] = config_dir
+
+  cli, service = load_plugins(cluster_name, 
+                              opt.get('cloud_provider'),
+                              opt.get('service_type'),
+                              opt.get('region', DEFAULT_REGION),
+                              config_dir)
+  return (opt, args, cli)
+
+def load_plugins(cluster_name, cloud_provider, service_type, region, config_dir):
+  """
+  Returns tuple with instance of CLIPlugin and instance of ServicePlugin
+  """
+  cli_candidate = plugin_manager.getPluginByName(service_type, category="cli")
+  service_candidate = plugin_manager.getPluginByName(service_type, category="service")
+
+  if cli_candidate is None:
+      logging.warn("No CLI plugin found matching the '%s' service. See documentation on github for more information." % service_type)
+      return (None, None)
+
+  if service_candidate is None:
+      logging.warn("No Service plugin found matching the '%s'. See documentation on github for more information." % service_type)
+      return (None, None)
+
+  service = service_candidate.plugin_object
+  service.cluster = get_cluster(cloud_provider)(cluster_name, 
+                                                config_dir,
+                                                region)
+  cli = cli_candidate.plugin_object
+  cli.service = service
+
+  logging.debug("Plugins being used: %s, %s" % (str(cli), str(service)))
+  return cli, service
+
+def parse_options(command, option_list=[], expected_arguments=(),
+                  unbounded_args=False):
+  """
+  Parse the arguments to command using the given option list.
+
+  If unbounded_args is true then there must be at least as many extra arguments
+  as specified by extra_arguments (the first argument is always CLUSTER).
+  Otherwise there must be exactly the same number of arguments as
+  extra_arguments.
+  """
+
+  config_file_name = "%s/%s" % (DEFAULT_CONFIG_DIR, CONFIG_FILENAME)
+  usage = """%%prog %s [options] %s
+
+Options may also be specified in a configuration file called
+%s located in the user's home directory.
+Options specified on the command line take precedence over any in the
+configuration file.""" % (command, " ".join(expected_arguments),
+                          config_file_name)
+  parser = OptionParser(usage=usage, version="%%prog %s" % VERSION,
+                        option_list=option_list)
+  parser.disable_interspersed_args()
+  (options, args) = parser.parse_args(sys.argv[2:])
+  if unbounded_args:
+    if len(args) < len(expected_arguments):
+      parser.error("incorrect number of arguments")
+  elif len(args) != len(expected_arguments):
+    parser.error("incorrect number of arguments")
+  return (vars(options), args)
+
+def get_cluster_running_time(instances):
+  now = datetime.utcnow()
+
+  def total_seconds(td):
+    try:
+        # python 2.7
+        return td.total_seconds()
+    except:
+        return (td.microseconds + (td.seconds + td.days * 24 * 3600) * 10**6) / 10**6
+
+  return sum([int(ceil(total_seconds(now - dateparser(i.launch_time.split(".")[0]))/3600.0)) for i in instances])
+
+def print_usage(script):
+    print """Usage: %(script)s COMMAND [ARGUMENTS]
+
+    exec CLUSTER CMD [OPTIONS]       executes the CMD for a given cluster name
+                                     CLUSTER with OPTIONS. Leave CMD out to see
+                                     a list of valid commands and arguments.
+    create-formatted-snapshot SIZE   create an empty, formatted snapshot of
+                                        size SIZE in GB (see help for required
+                                        options) 
+    list                             list the available clusters
+    list-storage                     list the EBS volumes currently in use
+
+    You can supply the --help option to any COMMAND to see arguments specific to
+    that command. Example: stratus list --help
+""" % locals()
+
+def get_config_dir(options_dict):
+    config_dir = options_dict.get('config_dir')
+    if not config_dir:
+        config_dir = DEFAULT_CONFIG_DIR
+    return config_dir
+
+def get_defined_clusters(options_dict, config_dir):
+    config_files = [os.path.join(config_dir, CONFIG_FILENAME)]
+    if 'config_dir' not in options_dict:
+        # if config_dir not set, then also search in current directory
+        config_files.insert(0, CONFIG_FILENAME)
+
+    config = ConfigParser.ConfigParser()
+    read_files = config.read(config_files)
+
+    clusters = {}
+    for cluster_name in config.sections():
+        clusters[cluster_name] = merge_config_with_options(cluster_name, config, options_dict)
+
+    return clusters
+
+def list_clusters(options_dict, list_all=False):
+
+    config_dir = get_config_dir(options_dict)
+    defined_clusters = get_defined_clusters(options_dict, config_dir)
+    region = options_dict.get('region', DEFAULT_REGION)
+    if region is None:
+        region = DEFAULT_REGION
+
+    rows = []
+    if list_all:
+        # TODO: Which cloud provider to use? Through the options maybe?
+        cloud_provider = DEFAULT_CLOUD_PROVIDER
+        plugins = plugin_manager.getPluginsOfCategory("service")
+
+        from cloud.providers.ec2 import Ec2Cluster
+
+        # For each service plugin we need to get the roles it uses so we
+        # can lookup the running clusters with the roles
+        for service_type, service in [(p.name, p.plugin_object) for p in plugins]:
+            for role in service.get_roles():
+                cluster_names = Ec2Cluster.get_clusters_with_role(role, region=region)
+
+                for cluster_name in cluster_names:
+                    service.cluster = get_cluster(cloud_provider)(cluster_name,
+                                                                  config_dir,
+                                                                  region)
+                    owned = ""
+                    if cluster_name in defined_clusters:
+                        owned = "*"
+                    running_instances = service.get_instances()
+                    total_time = get_cluster_running_time(running_instances)
+                    instance_type = running_instances[0].instance_type if running_instances else "N/A"
+                    rows.append([cluster_name, service_type, cloud_provider, 
+                                 len(running_instances), total_time, instance_type,
+                                 owned])
+
+    # get locally defined clusters if they haven't already been pulled above
+    already_listed_clusters = [r[0] for r in rows]
+    for (cluster_name, params) in defined_clusters.iteritems():
+        if cluster_name in already_listed_clusters:
+            continue
+
+        cloud_provider = params['cloud_provider']
+        service_type = params['service_type']
+
+        cli, service = load_plugins(cluster_name, 
+                                    cloud_provider, 
+                                    service_type, 
+                                    region, 
+                                    config_dir)
+
+        if cli is None or service is None:
+            continue
+
+        running_instances = service.get_instances()
+        total_time = get_cluster_running_time(running_instances)
+        instance_type = running_instances[0].instance_type if running_instances else "N/A"
+    
+        rows.append([cluster_name, service_type, cloud_provider, len(running_instances), 
+                     total_time, instance_type, "*"])
+
+    table = PrettyTable()
+    table.set_field_names([""]+[column[0] for column in LIST_CLUSTERS_COLUMNS])
+
+    sortby = options_dict.get('sortby', 'instances')
+    valid_sort_values = [c[1] for c in LIST_CLUSTERS_COLUMNS]
+
+    if sortby not in valid_sort_values:
+        print "Invalid sortby value."
+        sys.exit(1)
+
+    rows.sort(key = lambda x: x[valid_sort_values.index(sortby)], reverse=options_dict.get('reverse'))
+
+    for i in xrange(len(rows)):
+        rows[i].insert(0, i+1)
+        table.add_row(rows[i])
+
+    table.printt() 
+    print "Running instances in region '%s': %d" % (region, sum(map(lambda x: x[4], table.rows)))
+
+    while True:
+        try:
+            choice = raw_input("View details for cluster [Enter to quit]: ")
+            if choice == "":
+                return
+            choice = int(choice)
+            if choice > len(table.rows):
+                print "Not a valid choice. Try again."
+            else:
+                r = table.rows[choice-1]
+                print "\nDetails for cluster: %s" % r[1]
+
+                # lookup the CLI plugin for this cluster, provider, and service
+                # and use it to prin the running instances
+                cli, service = load_plugins(r[1], r[3], r[2], region, config_dir)
+                cli.print_instances()
+
+        except ValueError:
+            print "Not a valid choice. Try again."
+        except KeyboardInterrupt:
+            print
+            return
+
+def list_storage(options_dict, list_all=False):
+    region = options_dict.get('region')
+    if region is None:
+        region = DEFAULT_REGION
+
+    ec2 = get_ec2_connection(region)
+
+    table = PrettyTable()
+    table.set_field_names([column[0] for column in LIST_STORAGE_COLUMNS])
+
+    rows = []
+    volumes = ec2.get_all_volumes()
+    s = 0
+    for v in volumes:
+        s += v.size
+        rows.append([v.id, v.size, v.snapshot_id, v.zone, v.status, v.create_time])
+
+    sortby = options_dict.get('sortby', 'time')
+    valid_sort_values = [c[1] for c in LIST_STORAGE_COLUMNS]
+
+    if sortby not in valid_sort_values:
+        print "Invalid sortby value."
+        sys.exit(1)
+
+    rows.sort(key = lambda x: x[valid_sort_values.index(sortby)], reverse=options_dict.get('reverse'))
+
+    for row in rows:
+        table.add_row(row)
+
+    try:
+        table.printt()
+        print "Total volumes in region '%s': %d" % (region, len(table.rows))
+        print "Total size: %d (GB)" % s
+    except ValueError, e:
+        print "Sort error: %s" % str(e)
+
+def create_formatted_snapshot(size, ami, zone, region, key_name, ssh_options):
+    from cloud.providers.ec2 import Ec2Storage, Ec2Cluster
+
+    cluster = Ec2Cluster("__TEST_CLUSTER__", "/tmp", region)
+    Ec2Storage.create_formatted_snapshot(cluster, size,
+                                         zone,
+                                         ami,
+                                         key_name,
+                                         ssh_options)
+
+def main():
+
+    if len(sys.argv) < 2:
+        print_usage(sys.argv[0])
+        sys.exit(1)
+
+    command = sys.argv[1]
+
+    # list
+    if command == 'list':
+        (options_dict, args) = parse_options(command, LIST_CLUSTERS_OPTIONS)
+        list_clusters(options_dict, list_all=options_dict.get('all', False))
+    elif command == 'list-storage':
+        (options_dict, args) = parse_options(command, LIST_STORAGE_OPTIONS)
+        list_storage(options_dict)
+    elif command == 'exec':
+        (options_dict, args, cli) = parse_options_and_config(command, 
+                                                             BASIC_OPTIONS,
+                                                             unbounded_args=True)
+
+        if cli is None:
+            print "Unable to find a suitable plugin for service type: %s" % options_dict.get('service_type')
+            sys.exit(1)
+
+        cli.execute_command(args, options_dict)
+    elif command == 'create-formatted-snapshot':
+        (options_dict, args) = parse_options(command, 
+                                             SNAPSHOT_OPTIONS,
+                                             ["SIZE"])
+
+        for key in ['availability_zone', 'region', 'key_name', 'private_key']:
+            if not options_dict.get(key):
+                print "'%s' is a required option for this command." % key
+                sys.exit(1)
+
+        zone = options_dict.get('availability_zone')
+        region = options_dict.get('region')
+        key_name = options_dict.get('key_name')
+        ami = options_dict.get('image_id')
+        private_key = options_dict.get('private_key')
+        ssh_options = '-i %s -o StrictHostKeyChecking=no' % private_key
+
+        # which AMI to use
+        if ami is None:
+            if region == 'us-east-1':
+                ami = 'ami-ec48af85'
+            elif region == 'us-west-1':
+                ami = 'ami-257a2b60'
+            else:
+                # FIXME: Map all regions
+                raise RuntimeError("Region supplied (%s) does not have a corresponding AMI.")
+
+        size = int(args[0])
+
+        from cloud.providers.ec2 import Ec2Storage, Ec2Cluster
+        cluster = Ec2Cluster("__TEST_CLUSTER__", "/tmp", region)
+        Ec2Storage.create_formatted_snapshot(cluster, size, zone, ami, key_name, ssh_options)
+
+    else:
+        print_usage(sys.argv[0])
+        sys.exit(1)
 
 if __name__ == "__main__":
-  main()
+    logging.info("\n"+"*"*65 + "\nSTRATUS STARTED\n" + "*"*65)
+
+    # Uncomment below to add boto logging to the stratus.log file
+    #boto.set_file_logger("boto.root", 
+    #                     "stratus.log", 
+    #                     level=logging.DEBUG, 
+    #                     format_string='%(asctime)s::%(levelname)s::%(name)s  %(message)s')
+
+    main()

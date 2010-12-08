@@ -21,6 +21,15 @@ import ConfigParser
 import socket
 import urllib2
 
+from boto.ec2 import regions as EC2Regions
+
+def get_ec2_connection(regionName):
+    for region in EC2Regions():
+        if region.name == regionName:
+            return region.connect()
+
+    raise RuntimeError("Unknown region name: %s" % regionName)
+
 def bash_quote(text):
   """Quotes a string for bash, by using single quotes."""
   if text == None:

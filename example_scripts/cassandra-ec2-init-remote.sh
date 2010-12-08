@@ -92,6 +92,38 @@ function configure_cassandra() {
     done
   fi
 
+    if [ -f "$CASSANDRA_HOME_WITH_VERSION/conf/cassandra-env.sh" ]
+    then
+        # for cassandra 0.7.x we need to set the MAX_HEAP_SIZE env
+        # variable so that it can be used in cassandra-env.sh on
+        # startup
+        if [ -z "$MAX_HEAP_SIZE" ]
+        then
+            INSTANCE_TYPE=`wget -q -O - http://169.254.169.254/latest/meta-data/instance-type`
+            case $INSTANCE_TYPE in
+            m1.xlarge|m2.xlarge)
+                MAX_HEAP_SIZE="10G"
+                ;;
+            m1.large|c1.xlarge)
+                MAX_HEAP_SIZE="5G"
+                ;;
+            *)
+                # Don't set it and let cassandra-env figure it out
+                ;;
+            esac
+
+            # write it to the profile
+            echo "export MAX_HEAP_SIZE=$MAX_HEAP_SIZE" >> ~root/.bash_profile
+            echo "export MAX_HEAP_SIZE=$MAX_HEAP_SIZE" >> ~root/.bashrc
+        fi
+    else
+        write_cassandra_in_sh_file
+    fi
+}
+
+function write_cassandra_in_sh_file {
+  # for cassandra 0.6.x memory settings
+
   # configure the cassandra.in.sh script based on instance type
   INSTANCE_TYPE=`wget -q -O - http://169.254.169.254/latest/meta-data/instance-type`
   SETTINGS_FILE=$CASSANDRA_HOME_WITH_VERSION/bin/cassandra.in.sh

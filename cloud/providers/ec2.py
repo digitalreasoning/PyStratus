@@ -23,7 +23,9 @@ from cloud.storage import JsonVolumeManager
 from cloud.storage import JsonVolumeSpecManager
 from cloud.storage import MountableVolume
 from cloud.storage import Storage
+from cloud.exception import VolumesStillInUseException
 from cloud.util import xstr
+from cloud.util import get_ec2_connection
 from prettytable import PrettyTable
 import logging
 import os
@@ -65,8 +67,8 @@ class Ec2Cluster(Cluster):
   """
 
   @staticmethod
-  def get_clusters_with_role(role, state="running"):
-    all_instances = EC2Connection().get_all_instances()
+  def get_clusters_with_role(role, state="running", region="us-east-1"):
+    all_instances = get_ec2_connection(region).get_all_instances()
     clusters = []
     for res in all_instances:
       instance = res.instances[0]
@@ -75,9 +77,10 @@ class Ec2Cluster(Cluster):
           clusters.append(re.sub("-%s$" % re.escape(role), "", group.id))
     return clusters
 
-  def __init__(self, name, config_dir):
-    super(Ec2Cluster, self).__init__(name, config_dir)
-    self.ec2Connection = EC2Connection()
+  def __init__(self, name, config_dir, region):
+    super(Ec2Cluster, self).__init__(name, config_dir, region)
+
+    self.ec2Connection = get_ec2_connection(region)
 
   def get_provider_code(self):
     return "ec2"
@@ -200,6 +203,12 @@ class Ec2Cluster(Cluster):
     """
     self._check_role_name(role)
 
+    instances = self._get_instances(self._group_name_for_role(role),
+                               state_filter)
+    for i in instances:
+        i.__setattr__('role', role)
+    return instances
+    """
     instances = []
     for instance in self._get_instances(self._group_name_for_role(role),
                                         state_filter):
@@ -208,6 +217,7 @@ class Ec2Cluster(Cluster):
                                 instance.launch_time,
                                 instance.instance_type))
     return instances
+    """
 
   def _print_instance(self, role, instance):
     print "\t".join((role, instance.id,
@@ -226,6 +236,19 @@ class Ec2Cluster(Cluster):
             instance.dns_name, instance.private_dns_name,
             instance.state, xstr(instance.key_name), instance.instance_type,
             str(instance.launch_time), instance.placement)
+  
+  def get_instances(self, roles=None, state_filter="running"):
+    """
+    Returns a list of Instance objects in this cluster
+    """
+    if roles is None:
+      return self._get_instances(self._get_cluster_group_name(), state_filter)
+    else:
+      instances = []
+      for role in roles:
+        instances.extend(self._get_instances(self._group_name_for_role(role),
+                                        state_filter))
+      return instances
 
   def print_status(self, roles=None, state_filter="running"):
     """
@@ -268,6 +291,7 @@ class Ec2Cluster(Cluster):
     return [instance.id for instance in reservation.instances]
 
   def wait_for_instances(self, instance_ids, timeout=600):
+    wait_time = 3
     start_time = time.time()
     while True:
       if (time.time() - start_time >= timeout):
@@ -276,11 +300,10 @@ class Ec2Cluster(Cluster):
         if self._all_started(self.ec2Connection.get_all_instances(instance_ids)):
           break
       # don't timeout for race condition where instance is not yet registered
-      except EC2ResponseError:
+      except EC2ResponseError, e:
         pass
-      sys.stdout.write(".")
-      sys.stdout.flush()
-      time.sleep(1)
+      logging.info("Sleeping for %d seconds..." % wait_time)
+      time.sleep(wait_time)
 
   def _all_started(self, reservations):
     for res in reservations:
@@ -360,7 +383,8 @@ class Ec2Storage(Storage):
     print "Detaching volume"
     conn.detach_volume(volume.id, instance.id)
     print "Creating snapshot"
-    snapshot = volume.create_snapshot()
+    description = "Formatted %dGB snapshot created by PyStratus" % size
+    snapshot = volume.create_snapshot(description=description)
     print "Created snapshot %s" % snapshot.id
     _wait_for_volume(conn, volume.id)
     print
@@ -435,32 +459,13 @@ class Ec2Storage(Storage):
       volumes_dict[volume.id] = volume
     return volumes_dict
 
-  def _print_volume(self, role, volume):
-    print "\t".join((role, volume.id, str(volume.size),
-                     volume.snapshot_id, volume.zone,
-                     volume.status, str(volume.create_time),
-                     str(volume.attach_time)))
-
-  def _get_volume_status_headers(self):
-    return ("Role", "Instance ID", "Volume Id", "Volume Size", "Snapshot Id",
-            "Zone", "Status", "Device", "Create Time", "Attach Time")
-
-  def _get_volume_status(self, role, volume):
-    return (role, volume.attach_data.instance_id, volume.id, str(volume.size),
-            volume.snapshot_id, volume.zone,
-            "%s / %s" % (volume.status, volume.attach_data.status), 
-            volume.attach_data.device, str(volume.create_time),
-            str(volume.attach_data.attach_time))
-
-  def print_status(self, roles=None, volumes=None):
-    table = PrettyTable()
-    table.set_field_names(self._get_volume_status_headers())
-
+  def get_volumes(self, roles=None, volumes=None):
+    result = []
     if volumes is not None:
       for r, v in volumes:
-        table.add_row(self._get_volume_status(r,v))
+        result.append((r,v))
     else:
-      if roles == None:
+      if roles is None:
         storage_filename = self._get_storage_filename()
         volume_manager = JsonVolumeManager(storage_filename)
         roles = volume_manager.get_roles()
@@ -469,17 +474,8 @@ class Ec2Storage(Storage):
         ec2_volumes = self._get_ec2_volumes_dict(mountable_volumes_list)
         for mountable_volumes in mountable_volumes_list:
           for mountable_volume in mountable_volumes:
-            table.add_row(self._get_volume_status(role, ec2_volumes[mountable_volume.volume_id]))
-    table.printt()
-
-    if len(table.rows) > 0:
-        s = 0
-        for r in table.rows:
-            s += int(r[3])
-        print "Total volumes: %d" % len(table.rows)
-        print "Total size:    %d" % s
-    else:
-        print "No volumes defined."
+            result.append((role, ec2_volumes[mountable_volume.volume_id]))
+    return result
 
   def _replace(self, string, replacements):
     for (match, replacement) in replacements.iteritems():
@@ -573,9 +569,9 @@ class Ec2Storage(Storage):
           all_available = False
           logger.warning("Volume %s is not available.", volume)
       if not all_available:
-        logger.warning("Some volumes are still in use for role %s.\
-          Aborting delete.", role)
-        return
+        msg = "Some volumes are still in use. Aborting delete."
+        logger.warning(msg)
+        raise VolumesStillInUseException(msg)
       for volume in ec2_volumes.itervalues():
         volume.delete()
       volume_manager.remove_instance_storage_for_role(role)

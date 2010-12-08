@@ -40,7 +40,7 @@ import time
 import tempfile
 import simplejson
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__) 
 
 class InstanceTemplate(object):
   """
@@ -370,7 +370,7 @@ PERMANENTLY DELETE ALL DATA"):
       "AUTO_SHUTDOWN": it.auto_shutdown,
       "EBS_MAPPINGS": ";".join(ebs_mappings),
     }) }
-    print "EBS Mappings: %s" % ";".join(ebs_mappings)
+    logging.info("EBS Mappings: %s" % ";".join(ebs_mappings))
     instance_user_data = InstanceUserData(user_data_file_template, replacements)
 
     instance_ids = self.cluster.launch_instances(it.roles, it.number, it.image_id,
@@ -381,23 +381,8 @@ PERMANENTLY DELETE ALL DATA"):
                                             placement=it.placement,
                                             security_groups=it.security_groups)
 
-    if len(instance_ids) != it.number:
-        print "******************"
-        print "* WARNING: Number of reported instance ids (%d) does not match requested number (%d)" % (len(instance_ids), it.number)
-        print "******************"
-
-    print "Waiting for %s instance(s) to start: %s" % (it.number, ", ".join(instance_ids))
-    time.sleep(1)
-
-    try:
-      self.cluster.wait_for_instances(instance_ids)
-      print "%d instances started" % (it.number,)
-    except TimeoutException:
-      print "Timeout while waiting for %s instance to start." % ",".join(it.roles)
-      return
-
-    self.list()
-    return self.cluster.get_instances_in_role(it.roles[0], "running")
+    logging.debug("Instance ids reported to start: %s" % str(instance_ids))
+    return instance_ids
 
 def get_service(service, provider):
     """

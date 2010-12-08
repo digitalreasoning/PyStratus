@@ -34,10 +34,16 @@ echo "export %ENV%" >> ~root/.bash_profile
 echo "export %ENV%" >> ~root/.bashrc
 
 DEFAULT_CASSANDRA_URL="http://mirror.cloudera.com/apache/cassandra/0.6.4/apache-cassandra-0.6.4-bin.tar.gz"
+CASSANDRA_HOME_ALIAS=/usr/local/apache-cassandra
 
 HADOOP_VERSION=${HADOOP_VERSION:-0.20.1}
 HADOOP_HOME=/usr/local/hadoop-$HADOOP_VERSION
 HADOOP_CONF_DIR=$HADOOP_HOME/conf
+
+PIG_VERSION=${PIG_VERSION:-0.7.0}
+PIG_HOME=/usr/local/pig-$PIG_VERSION
+PIG_CONF_DIR=$PIG_HOME/conf
+
 SELF_HOST=`wget -q -O - http://169.254.169.254/latest/meta-data/public-hostname`
 for role in $(echo "$ROLES" | tr "," "\n"); do
   case $role in
@@ -75,6 +81,18 @@ function install_user_packages() {
   fi
 }
 
+function install_yourkit() {
+	mkdir /mnt/yjp
+	YOURKIT_URL="http://www.yourkit.com/download/yjp-9.0.7-linux.tar.bz2"
+	curl="curl --retry 3 --silent --show-error --fail"
+	$curl -O $YOURKIT_URL
+	yourkit_tar_file=`basename $YOURKIT_URL`
+    tar xjf $yourkit_tar_file -C /mnt/yjp
+    rm -f $yourkit_tar_file
+    chown -R hadoop /mnt/yjp
+	chgrp -R hadoop /mnt/yjp
+}
+
 function install_hadoop() {
   useradd hadoop
 
@@ -104,6 +122,36 @@ function install_hadoop() {
 
   echo "export HADOOP_HOME=$HADOOP_HOME" >> ~root/.bashrc
   echo 'export PATH=$JAVA_HOME/bin:$HADOOP_HOME/bin:$PATH' >> ~root/.bashrc
+}
+
+function install_pig()
+{
+  pig_tar_url=http://mirror.cloudera.com/apache/hadoop/pig/pig-$PIG_VERSION/pig-$PIG_VERSION.tar.gz
+  pig_tar_file=`basename $pig_tar_url`
+
+  curl="curl --retry 3 --silent --show-error --fail"
+  for i in `seq 1 3`;
+  do
+    $curl -O $pig_tar_url
+  done
+
+  if [ ! -e $pig_tar_file ]; then
+    echo "Failed to download $pig_tar_url. Aborting."
+    exit 1
+  fi
+
+  tar zxf $pig_tar_file -C /usr/local
+  rm -f $pig_tar_file
+  
+  if [ ! -e $HADOOP_CONF_DIR ]; then
+    echo "Hadoop must be installed.  Aborting."
+    exit 1
+  fi
+  
+  cp $HADOOP_CONF_DIR/*.xml $PIG_CONF_DIR/
+
+  echo "export PIG_HOME=$PIG_HOME" >> ~root/.bashrc
+  echo 'export PATH=$JAVA_HOME/bin:$PIG_HOME/bin:$PATH' >> ~root/.bashrc
 }
 
 function prep_disk() {
@@ -138,10 +186,6 @@ function wait_for_mount {
     echo " Mounted."
     break;
   done
-
-  if [ -e $mount/lost+found ]; then
-    rm -rf $mount/lost+found
-  fi
 }
 
 function make_hadoop_dirs {
@@ -170,7 +214,6 @@ function configure_hadoop() {
       role=`echo $mapping | cut -d, -f1`
       mount=`echo $mapping | cut -d, -f2`
       device=`echo $mapping | cut -d, -f3`
-
       wait_for_mount $mount $device
       DFS_NAME_DIR=${DFS_NAME_DIR},"$mount/hadoop/hdfs/name"
       FS_CHECKPOINT_DIR=${FS_CHECKPOINT_DIR},"$mount/hadoop/hdfs/secondary"
@@ -545,21 +588,58 @@ function install_cassandra() {
     rm -f $cassandra_tar_file
 
     CASSANDRA_HOME_WITH_VERSION=/usr/local/`ls -1 /usr/local | grep cassandra`
-    CASSANDRA_ALIAS=/usr/local/apache-cassandra
 
-    # symlink the actual cassandra directory to a more standard one (without version)
-    # this is very important so the cluster can be configured more easily after the 
-    # machines start and services started/stopped
-    ln -s $CASSANDRA_HOME_WITH_VERSION $CASSANDRA_ALIAS
-
-    echo "export CASSANDRA_HOME=$CASSANDRA_ALIAS" >> ~root/.bash_profile
+    echo "export CASSANDRA_HOME=$CASSANDRA_HOME_ALIAS" >> ~root/.bash_profile
     echo 'export PATH=$CASSANDRA_HOME/bin:$PATH' >> ~root/.bash_profile
 }
 
 function configure_cassandra() {
+  if [ -n "$EBS_MAPPINGS" ]; then
+    # EBS_MAPPINGS is like "cn,/ebs1,/dev/sdj;cn,/ebs2,/dev/sdk"
+    # EBS_MAPPINGS is like "ROLE,MOUNT_POINT,DEVICE;ROLE,MOUNT_POINT,DEVICE"
+    for mapping in $(echo "$EBS_MAPPINGS" | tr ";" "\n"); do
+      role=`echo $mapping | cut -d, -f1`
+      mount=`echo $mapping | cut -d, -f2`
+      device=`echo $mapping | cut -d, -f3`
+      wait_for_mount $mount $device
+    done
+  fi
+
+    if [ -f "$CASSANDRA_HOME_WITH_VERSION/conf/cassandra-env.sh" ]
+    then
+        # for cassandra 0.7.x we need to set the MAX_HEAP_SIZE env
+        # variable so that it can be used in cassandra-env.sh on
+        # startup
+        if [ -z "$MAX_HEAP_SIZE" ]
+        then
+            INSTANCE_TYPE=`wget -q -O - http://169.254.169.254/latest/meta-data/instance-type`
+            case $INSTANCE_TYPE in
+            m1.xlarge|m2.xlarge)
+                MAX_HEAP_SIZE="10G"
+                ;;
+            m1.large|c1.xlarge)
+                MAX_HEAP_SIZE="5G"
+                ;;
+            *)
+                # Don't set it and let cassandra-env figure it out
+                ;;
+            esac
+
+            # write it to the profile
+            echo "export MAX_HEAP_SIZE=$MAX_HEAP_SIZE" >> ~root/.bash_profile
+            echo "export MAX_HEAP_SIZE=$MAX_HEAP_SIZE" >> ~root/.bashrc
+        fi
+    else
+        write_cassandra_in_sh_file
+    fi
+}
+
+function write_cassandra_in_sh_file {
+  # for cassandra 0.6.x memory settings
+
   # configure the cassandra.in.sh script based on instance type
   INSTANCE_TYPE=`wget -q -O - http://169.254.169.254/latest/meta-data/instance-type`
-  SETTINGS_FILE=$DEFAULT_CASSANDRA_HOME/bin/cassandra.in.sh
+  SETTINGS_FILE=$CASSANDRA_HOME_WITH_VERSION/bin/cassandra.in.sh
 
   cat > $SETTINGS_FILE <<EOF
 # Licensed to the Apache Software Foundation (ASF) under one
@@ -578,7 +658,7 @@ function configure_cassandra() {
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-cassandra_home=$DEFAULT_CASSANDRA_HOME
+cassandra_home=$CASSANDRA_HOME_ALIAS
 
 # The directory where Cassandra's configs live (required)
 CASSANDRA_CONF=\$cassandra_home/conf
@@ -602,10 +682,16 @@ done
 EOF
 
   case $INSTANCE_TYPE in
-  m1.xlarge|c1.xlarge)
+  m1.xlarge|m2.xlarge)
     cat >> $SETTINGS_FILE <<EOF
 # Arguments to pass to the JVM
 JVM_OPTS="-ea -Xms10G -Xmx10G -XX:+UseParNewGC -XX:+UseConcMarkSweepGC -XX:+CMSParallelRemarkEnabled -XX:SurvivorRatio=8 -XX:MaxTenuringThreshold=1 -XX:+HeapDumpOnOutOfMemoryError -Dcom.sun.management.jmxremote.port=8080 -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.authenticate=false"
+EOF
+    ;;
+  m1.large|c1.xlarge)
+    cat >> $SETTINGS_FILE <<EOF
+# Arguments to pass to the JVM
+JVM_OPTS="-ea -Xms5G -Xmx5G -XX:+UseParNewGC -XX:+UseConcMarkSweepGC -XX:+CMSParallelRemarkEnabled -XX:SurvivorRatio=8 -XX:MaxTenuringThreshold=1 -XX:+HeapDumpOnOutOfMemoryError -Dcom.sun.management.jmxremote.port=8080 -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.authenticate=false"
 EOF
     ;;
   *)
@@ -615,6 +701,16 @@ JVM_OPTS="-ea -Xms256M -Xmx1G -XX:+UseParNewGC -XX:+UseConcMarkSweepGC -XX:+CMSP
 EOF
     ;;
   esac
+}
+
+function finish_cassandra {
+    # symlink the actual cassandra directory to a more standard one (without version)
+    # this is very important so the cluster can be configured more easily after the 
+    # machines start and services started/stopped
+    #
+    # NOTE: Stratus also looks for this aliased directory to know when cassandra
+    # is ready to be started
+    ln -s $CASSANDRA_HOME_WITH_VERSION $CASSANDRA_HOME_ALIAS
 }
 
 register_auto_shutdown
@@ -638,6 +734,7 @@ for role in $(echo "$ROLES" | tr "," "\n"); do
     start_daemon datanode
     install_cassandra
     configure_cassandra
+    finish_cassandra
     ;;
   hybrid_tt)
     start_daemon tasktracker
