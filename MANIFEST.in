@@ -1,0 +1,3 @@
+recursive-include cassandra/data/ *
+recursive-include hadoop/data/ *
+recursive-include hadoop_cassandra_hybrid/data/ *

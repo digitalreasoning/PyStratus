@@ -162,13 +162,14 @@ class Instance(object):
   """
   A server instance.
   """
-  def __init__(self, id, role, public_ip, private_ip, launch_time, instance_type):
+  def __init__(self, id, role, public_ip, private_ip, launch_time, instance_type, zone):
     self.id = id
     self.role = role
     self.public_ip = public_ip
     self.private_ip = private_ip
     self.launch_time = launch_time
     self.instance_type = instance_type
+    self.zone = zone 
 
 class RoleSyntaxException(Exception):
   """

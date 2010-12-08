@@ -13,7 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from boto.ec2.connection import EC2Connection
 from boto.exception import EC2ResponseError
 from cloud.cluster import Cluster
 from cloud.cluster import Instance
@@ -215,7 +214,8 @@ class Ec2Cluster(Cluster):
       instances.append(Instance(instance.id, role, instance.dns_name,
                                 instance.private_dns_name, 
                                 instance.launch_time,
-                                instance.instance_type))
+                                instance.instance_type,
+                                instance.placement))
     return instances
     """
 
