@@ -308,6 +308,7 @@ class Ec2Cluster(Cluster):
   def _all_started(self, reservations):
     for res in reservations:
       for instance in res.instances:
+        logging.info("Instance %s state = %s" % (instance, instance.state))
         if instance.state != "running":
           return False
     return True
@@ -353,11 +354,13 @@ class Ec2Storage(Storage):
     reservation = conn.run_instances(image_id, key_name=key_name,
                                      placement=availability_zone)
     instance = reservation.instances[0]
+    print "Waiting for instance %s" % instance
     try:
       cluster.wait_for_instances([instance.id,])
       print "Started instance %s" % instance.id
     except TimeoutException:
-      print "Timeout"
+      terminated = conn.terminate_instances([instance.id,])
+      print "Timeout...shutting down %s" % terminated
       return
     print
     print "Waiting 60 seconds before attaching storage"

@@ -35,7 +35,6 @@ from datetime import datetime
 from dateutil.parser import parse as dateparser
 from math import ceil
 from yapsy.PluginManager import PluginManager
-logging.config.fileConfig("logging.conf")
 
 from cloud import VERSION
 from cloud.settings import SERVICE_PROVIDER_MAP
@@ -102,11 +101,11 @@ SNAPSHOT_OPTIONS = BASIC_OPTIONS[:] + [
     help="SSH options to use."),
 ]
 
-
 # load the service plugin based on the service type
-plugin_manager = PluginManager(categories_filter=dict(cli=CLIPlugin, service=ServicePlugin),
-                        directories_list=["plugins"], 
-                        plugin_info_ext="plugin")
+plugin_manager = PluginManager(categories_filter=dict(
+                               cli=CLIPlugin, service=ServicePlugin),
+                               directories_list=[os.path.join(DEFAULT_CONFIG_DIR, "plugins")],
+                               plugin_info_ext="plugin")
 plugin_manager.locatePlugins()
 plugin_manager.loadPlugins()
 
@@ -405,6 +404,10 @@ def create_formatted_snapshot(size, ami, zone, region, key_name, ssh_options):
 
 def main():
 
+    if "--version" in sys.argv:
+        print "Vesion: %s" % VERSION
+        sys.exit(0)
+
     if len(sys.argv) < 2:
         print_usage(sys.argv[0])
         sys.exit(1)
@@ -435,7 +438,7 @@ def main():
 
         for key in ['availability_zone', 'region', 'key_name', 'private_key']:
             if not options_dict.get(key):
-                print "'%s' is a required option for this command." % key
+                print "'%s' is a required option for this command." % key.replace("_","-")
                 sys.exit(1)
 
         zone = options_dict.get('availability_zone')
@@ -466,7 +469,10 @@ def main():
         sys.exit(1)
 
 if __name__ == "__main__":
-    logging.info("\n"+"*"*65 + "\nSTRATUS STARTED\n" + "*"*65)
+    log_config = os.path.join(DEFAULT_CONFIG_DIR, "logging.conf")
+    if os.path.isfile(log_config):
+        logging.config.fileConfig(log_config)
+    logging.getLogger(__file__).info("\n"+"*"*65 + "\nSTRATUS STARTED\n" + "*"*65)
 
     # Uncomment below to add boto logging to the stratus.log file
     #boto.set_file_logger("boto.root", 

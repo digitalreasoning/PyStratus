@@ -18,21 +18,11 @@ from setuptools import setup, find_packages
 version = __import__('cloud').VERSION
 
 setup(name='stratus',
-      version=version,
-      description='Scripts for running various services on cloud providers',
-      license = 'Apache License (2.0)',
-      author = 'Abe Music - Digital Reasoning Systems, Inc. && Apache Hadoop Contributors',
-      author_email = 'abe.music@digitalreasoning.com',
-      packages=find_packages(),
-      package_dir={
-          'cassandra':'cassandra',
-          'hadoop':'hadoop',
-          'hadoop_cassandra_hybrid': 'hadoop_cassandra_hybrid',
-      },
-      package_data={
-          'cassandra': ['data/*.sh'],
-          'hadoop': ['data/*.sh'],
-          'hadoop_cassandra_hybrid': ['data/*.sh'],
-      },
-      scripts=['stratus'],
+    version=version,
+    description='Scripts for running various services on cloud providers',
+    license = 'Apache License (2.0)',
+    author = 'Abe Music - Digital Reasoning Systems, Inc.',
+    author_email = 'abe.music@digitalreasoning.com',
+    packages=find_packages(),
+    scripts=['stratus'],
 )

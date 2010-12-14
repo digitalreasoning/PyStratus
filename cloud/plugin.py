@@ -50,7 +50,7 @@ class CLIPlugin(IPlugin):
 
     def __init__(self, service=None):
         self.service = service
-        self.logger = logging.getLogger(self.__class__.__name__)
+        self.logger = logging #logging.getLogger(self.__class__.__name__)
 
     def print_help(self, exitCode=1):
         if self.USAGE is None:
@@ -233,7 +233,7 @@ class CLIPlugin(IPlugin):
 class ServicePlugin(object):
     def __init__(self, cluster=None):
         self.cluster = cluster
-        self.logger = logging.getLogger(self.__class__.__name__)
+        self.logger = logging #logging.getLogger(self.__class__.__name__)
 
     def get_roles(self):
         """
