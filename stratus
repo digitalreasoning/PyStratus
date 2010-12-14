@@ -102,12 +102,7 @@ SNAPSHOT_OPTIONS = BASIC_OPTIONS[:] + [
 ]
 
 # load the service plugin based on the service type
-plugin_manager = PluginManager(categories_filter=dict(
-                               cli=CLIPlugin, service=ServicePlugin),
-                               directories_list=[os.path.join(DEFAULT_CONFIG_DIR, "plugins")],
-                               plugin_info_ext="plugin")
-plugin_manager.locatePlugins()
-plugin_manager.loadPlugins()
+plugin_manager = None
 
 def parse_options_and_config(command, option_list=[], extra_arguments=(),
                              unbounded_args=False):
@@ -474,7 +469,15 @@ if __name__ == "__main__":
         logging.config.fileConfig(log_config)
     logging.getLogger(__file__).info("\n"+"*"*65 + "\nSTRATUS STARTED\n" + "*"*65)
 
-    # Uncomment below to add boto logging to the stratus.log file
+    # load the plugins after logging is set up 
+    plugin_manager = PluginManager(categories_filter=dict(
+                                   cli=CLIPlugin, service=ServicePlugin),
+                                   directories_list=[os.path.join(DEFAULT_CONFIG_DIR, "plugins")],
+                                   plugin_info_ext="plugin")
+    plugin_manager.locatePlugins()
+    plugin_manager.loadPlugins()
+
+    # Uncomment below to enable boto logging
     #boto.set_file_logger("boto.root", 
     #                     "stratus.log", 
     #                     level=logging.DEBUG, 
