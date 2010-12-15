@@ -18,6 +18,7 @@ from cloud.cluster import Cluster
 from cloud.cluster import Instance
 from cloud.cluster import RoleSyntaxException
 from cloud.cluster import TimeoutException
+from cloud.cluster import InstanceTerminatedException
 from cloud.storage import JsonVolumeManager
 from cloud.storage import JsonVolumeSpecManager
 from cloud.storage import MountableVolume
@@ -290,14 +291,14 @@ class Ec2Cluster(Cluster):
       instance_type=size_id, placement=kwargs.get('placement', None))
     return [instance.id for instance in reservation.instances]
 
-  def wait_for_instances(self, instance_ids, timeout=600):
+  def wait_for_instances(self, instance_ids, timeout=600, fail_on_terminated=True):
     wait_time = 3
     start_time = time.time()
     while True:
       if (time.time() - start_time >= timeout):
         raise TimeoutException()
       try:
-        if self._all_started(self.ec2Connection.get_all_instances(instance_ids)):
+        if self._all_started(self.ec2Connection.get_all_instances(instance_ids), fail_on_terminated):
           break
       # don't timeout for race condition where instance is not yet registered
       except EC2ResponseError, e:
@@ -305,10 +306,15 @@ class Ec2Cluster(Cluster):
       logging.info("Sleeping for %d seconds..." % wait_time)
       time.sleep(wait_time)
 
-  def _all_started(self, reservations):
+  def _all_started(self, reservations, fail_on_terminated=True):
     for res in reservations:
       for instance in res.instances:
         logging.info("Instance %s state = %s" % (instance, instance.state))
+
+        # check for terminated
+        if fail_on_terminated and instance.state == "terminated":
+            raise InstanceTerminatedException(instance.state_reason['message'])
+
         if instance.state != "running":
           return False
     return True

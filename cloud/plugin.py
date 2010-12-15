@@ -317,6 +317,8 @@ class ServicePlugin(object):
         self.logger.debug("EBS Mappings: %s" % ";".join(ebs_mappings))
         instance_user_data = InstanceUserData(user_data_file_template, replacements)
 
+        self.logger.debug("InstanceUserData gzipped length: %d" % len(instance_user_data.read_as_gzip_stream()))
+
         instance_ids = self.cluster.launch_instances(it.roles, 
                                                      it.number, 
                                                      it.image_id,

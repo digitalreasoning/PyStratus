@@ -188,3 +188,9 @@ class TimeoutException(Exception):
   Raised when a timeout is exceeded.
   """
   pass
+
+class InstanceTerminatedException(Exception):
+    """
+    Raised when an instance that should start goes to a terminated state.
+    """
+    pass

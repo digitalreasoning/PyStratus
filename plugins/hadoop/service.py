@@ -13,6 +13,8 @@ from cloud.plugin import ServicePlugin
 from cloud.util import xstr
 from cloud.util import url_get
 
+from __future__ import with_statement
+
 class HadoopService(ServicePlugin):
     """
     """
