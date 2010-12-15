@@ -217,7 +217,7 @@ class CLIPlugin(IPlugin):
 
         while True:
             try:
-                choice = raw_input("Cassandra node to login to [Enter = quit]: ")
+                choice = raw_input("Instance to login to [Enter = quit]: ")
                 if choice == "":
                     sys.exit(0)
                 choice = int(choice)
