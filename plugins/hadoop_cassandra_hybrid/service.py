@@ -1,3 +1,5 @@
+from __future__ import with_statement
+
 import os
 import sys
 import time
@@ -12,8 +14,6 @@ from cloud.service import InstanceTemplate
 from cloud.plugin import ServicePlugin 
 from cloud.util import xstr
 from cloud.util import url_get
-
-from __future__ import with_statement
 
 from yaml import load as parse_yaml
 from yaml import dump as dump_yaml
