@@ -30,8 +30,8 @@ where COMMAND and [OPTIONS] may be one of:
                                STORAGE COMMANDS
   ----------------------------------------------------------------------------------
   list-storage                        list storage volumes for CLUSTER
-  create-storage NUM_INSTANCES        create volumes for NUM_INSTANCES instances
-    SPEC_FILE                           for CLUSTER, using SPEC_FILE
+  create-storage ROLE NUM_INSTANCES   create volumes for NUM_INSTANCES instances of
+    SPEC_FILE                           type ROLE for CLUSTER, using SPEC_FILE
   delete-storage                      delete all storage volumes for CLUSTER
 """
     
@@ -150,25 +150,25 @@ where COMMAND and [OPTIONS] may be one of:
         self.logger.debug("Startup complete.")
 
     def create_storage(self, argv, options_dict):
-        raise RuntimeError("Not implemented.")
-
         opt, args = self.parse_options(self._command_name, argv, BASIC_OPTIONS,
-                                       ["NUM_INSTANCES", "SPEC_FILE"])
+                                       ["ROLE", "NUM_INSTANCES", "SPEC_FILE"])
+
         opt.update(options_dict)
 
-        role = CASSANDRA_NODE
-        number_of_instances = int(args[0])
-        spec_file = args[1]
+        role = args[0]
+        number_of_instances = int(args[1])
+        spec_file = args[2]
 
-        # FIXME
-        # check_options_set(opt, ['availability_zone'])
+        valid_roles = (self.service.NAMENODE, self.service.DATANODE)
+        if role not in valid_roles:
+            raise RuntimeError("Role must be one of '%s' or '%s'" % valid_roles)
 
         self.service.create_storage(role, 
                                     number_of_instances,
                                     opt.get('availability_zone'),
                                     spec_file)
         self.print_storage()
-
+    
     def proxy(self, argv, options_dict):
         instances = self.service.get_instances()
         if not instances:
