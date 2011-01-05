@@ -133,22 +133,21 @@ function install_pig()
   done
 
   if [ ! -e $pig_tar_file ]; then
-    echo "Failed to download $pig_tar_url. Aborting."
-    exit 1
-  fi
+    echo "Failed to download $pig_tar_url. Pig will not be installed."
+  else
+    tar zxf $pig_tar_file -C /usr/local
+    rm -f $pig_tar_file
+ 
+    if [ ! -e $HADOOP_CONF_DIR ]; then
+      echo "Hadoop must be installed.  Aborting."
+      exit 1
+    fi
 
-  tar zxf $pig_tar_file -C /usr/local
-  rm -f $pig_tar_file
-  
-  if [ ! -e $HADOOP_CONF_DIR ]; then
-    echo "Hadoop must be installed.  Aborting."
-    exit 1
-  fi
-  
-  cp $HADOOP_CONF_DIR/*.xml $PIG_CONF_DIR/
+    cp $HADOOP_CONF_DIR/*.xml $PIG_CONF_DIR/
 
-  echo "export PIG_HOME=$PIG_HOME" >> ~root/.bashrc
-  echo 'export PATH=$JAVA_HOME/bin:$PIG_HOME/bin:$PATH' >> ~root/.bashrc
+    echo "export PIG_HOME=$PIG_HOME" >> ~root/.bashrc
+    echo 'export PATH=$JAVA_HOME/bin:$PIG_HOME/bin:$PATH' >> ~root/.bashrc
+ fi
 }
 
 function prep_disk() {
