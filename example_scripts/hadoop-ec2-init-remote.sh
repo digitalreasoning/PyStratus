@@ -33,7 +33,7 @@ export %ENV%
 echo "export %ENV%" >> ~root/.bash_profile
 echo "export %ENV%" >> ~root/.bashrc
 
-HADOOP_VERSION=${HADOOP_VERSION:-0.20.1}
+HADOOP_VERSION=${HADOOP_VERSION:-0.20.2+737}
 HADOOP_HOME=/usr/local/hadoop-$HADOOP_VERSION
 HADOOP_CONF_DIR=$HADOOP_HOME/conf
 
@@ -93,21 +93,11 @@ function install_yourkit() {
 function install_hadoop() {
   useradd hadoop
 
-  hadoop_tar_url=http://s3.amazonaws.com/hadoop-releases/core/hadoop-$HADOOP_VERSION/hadoop-$HADOOP_VERSION.tar.gz
+  hadoop_tar_url=http://archive.cloudera.com/cdh/3/hadoop-$HADOOP_VERSION.tar.gz
   hadoop_tar_file=`basename $hadoop_tar_url`
-  hadoop_tar_md5_file=`basename $hadoop_tar_url.md5`
 
   curl="curl --retry 3 --silent --show-error --fail"
-  for i in `seq 1 3`;
-  do
-    $curl -O $hadoop_tar_url
-    $curl -O $hadoop_tar_url.md5
-    if md5sum -c $hadoop_tar_md5_file; then
-      break;
-    else
-      rm -f $hadoop_tar_file $hadoop_tar_md5_file
-    fi
-  done
+  $curl -O $hadoop_tar_url
 
   if [ ! -e $hadoop_tar_file ]; then
     echo "Failed to download $hadoop_tar_url. Aborting."
