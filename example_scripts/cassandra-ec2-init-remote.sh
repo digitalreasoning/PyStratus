@@ -38,6 +38,18 @@ echo "export %ENV%" >> ~root/.bashrc
 
 DEFAULT_CASSANDRA_URL="http://mirror.cloudera.com/apache/cassandra/0.6.4/apache-cassandra-0.6.4-bin.tar.gz"
 CASSANDRA_HOME_ALIAS=/usr/local/apache-cassandra
+DEFAULT_JNA_URL="https://jna.dev.java.net/source/browse/*checkout*/jna/tags/3.2.7/jnalib/dist/jna.jar?rev=1138"
+
+function install_jna() {
+    curl="curl --retry 3 --silent --show-error --fail"
+    if [ ! -z "$JNA_URL" ]; then
+        DEFAULT_JNA_URL=$JNA_URL
+    fi
+
+    $curl -o "jna.jar" $DEFAULT_JNA_URL
+    cp "jna.jar" $CASSANDRA_HOME_WITH_VERSION/lib
+    rm -rf "jna.jar"
+}
 
 function install_cassandra() {
 
@@ -56,6 +68,8 @@ function install_cassandra() {
 
     echo "export CASSANDRA_HOME=$CASSANDRA_HOME_ALIAS" >> ~root/.bash_profile
     echo 'export PATH=$CASSANDRA_HOME/bin:$PATH' >> ~root/.bash_profile
+
+    install_jna
 }
 
 function wait_for_mount {
