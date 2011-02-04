@@ -23,13 +23,18 @@ try:
     from cElementTree import tostring as dump_xml
     from cElementTree import Element
 except:
-    print "*"*80
-    print "WARNING: cElementTree module does not exist. Defaulting to elementtree instead."
-    print "It's recommended that you install the cElementTree module for faster XML parsing."
-    print "*"*80
-    from elementtree.ElementTree import parse as parse_xml
-    from elementtree.ElementTree import parse as parse_xml
-    from elementtree.ElementTree import Element
+    try:
+        from xml.etree.cElementTree import parse as parse_xml
+        from xml.etree.cElementTree import tostring as dump_xml
+        from xml.etree.cElementTree import Element
+    except:
+        print "*"*80
+        print "WARNING: cElementTree module does not exist. Defaulting to elementtree instead."
+        print "It's recommended that you install the cElementTree module for faster XML parsing."
+        print "*"*80
+        from elementtree.ElementTree import parse as parse_xml
+        from elementtree.ElementTree import parse as parse_xml
+        from elementtree.ElementTree import Element
 
 class HadoopCassandraService(ServicePlugin):
     """

@@ -18,13 +18,18 @@ try:
     from cElementTree import tostring as dump_xml
     from cElementTree import Element
 except:
-    print "*"*80
-    print "WARNING: cElementTree module does not exist. Defaulting to elementtree instead."
-    print "It's recommended that you install the cElementTree module for faster XML parsing."
-    print "*"*80
-    from elementtree.ElementTree import parse as parse_xml
-    from elementtree.ElementTree import parse as parse_xml
-    from elementtree.ElementTree import Element
+    try:
+        from xml.etree.cElementTree import parse as parse_xml
+        from xml.etree.cElementTree import tostring as dump_xml
+        from xml.etree.cElementTree import Element
+    except:
+        print "*"*80
+        print "WARNING: cElementTree module does not exist. Defaulting to elementtree instead."
+        print "It's recommended that you install the cElementTree module for faster XML parsing."
+        print "*"*80
+        from elementtree.ElementTree import parse as parse_xml
+        from elementtree.ElementTree import parse as parse_xml
+        from elementtree.ElementTree import Element
 
 
 class CassandraService(ServicePlugin):
@@ -68,13 +73,13 @@ class CassandraService(ServicePlugin):
         self.logger.debug("Instances started: %s" % (str(instances),))
         
         self._attach_storage(instance_template.roles)
-        self._transfer_config_files(ssh_options, 
+        self._transfer_config_files(ssh_options,
                                     config_file, 
-                                    keyspace_file, 
+                                    keyspace_file,
                                     instances=instances)
         self.start_cassandra(ssh_options, create_keyspaces=(keyspace_file is not None), instances=instances)
     
-    def _transfer_config_files(self, ssh_options, config_file, keyspace_file=None, 
+    def _transfer_config_files(self, ssh_options, config_file, keyspace_file=None,
                                      instances=None):
         """
         """
