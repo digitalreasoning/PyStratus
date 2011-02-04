@@ -82,7 +82,7 @@ class CassandraService(ServicePlugin):
                                     new_instances,
                                     keyspace_file,
                                     new_cluster=new_cluster)
-        self.start_cassandra(ssh_options, create_keyspaces=(new_cluster and keyspace_file is not None), instances=new_instances)
+        self.start_cassandra(ssh_options, config_file, create_keyspaces=(new_cluster and keyspace_file is not None), instances=new_instances)
     
     def _transfer_config_files(self, ssh_options, config_file, instances,
                                      keyspace_file=None, new_cluster=True):
@@ -237,8 +237,18 @@ class CassandraService(ServicePlugin):
     
     def _get_evenly_spaced_tokens_for_n_instances(self, n):
         return [i*(2**127/n) for i in range(1,n+1)]
-    
-    def _create_keyspaces_from_definitions_file(self, instance, ssh_options):
+
+    def _get_config_value(self, config_file, yaml_name, xml_name):
+        if config_file.endswith(".xml") :
+            xml = parse_xml(urllib.urlopen(config_file)).getroot()
+            return xml.find(xml_name).text
+        elif config_file.endswith(".yaml") :
+            yaml = parse_yaml(urllib.urlopen(config_file))
+            return yaml[yaml_name]
+        else:
+            raise Exception("Configuration file must be on of xml or yaml")
+
+    def _create_keyspaces_from_definitions_file(self, instance, config_file, ssh_options):
         # TODO: Keyspaces could already exist...how do I check this?
         # TODO: Can it be an arbitrary node?
 
@@ -255,8 +265,10 @@ class CassandraService(ServicePlugin):
         else:
             self.logger.debug("Found keyspaces.txt...Proceeding with keyspace generation.")
 
-        command = "/usr/local/apache-cassandra/bin/cassandra-cli --host %s --batch " \
-                  "< /usr/local/apache-cassandra/conf/keyspaces.txt" % instance.private_dns_name
+        port = self._get_config_value(config_file, "rpc_port", "ThriftPort")
+
+        command = "/usr/local/apache-cassandra/bin/cassandra-cli --host %s --port %s --batch " \
+                  "< /usr/local/apache-cassandra/conf/keyspaces.txt" % (instance.private_dns_name, port)
         ssh_command = self._get_standard_ssh_command(instance, ssh_options, command)
         retcode = subprocess.call(ssh_command, shell=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
 
@@ -294,7 +306,7 @@ class CassandraService(ServicePlugin):
                 self.logger.info("Move succeeded for instance %s..." % instance.id)
 
 
-    def start_cassandra(self, ssh_options, create_keyspaces=False, instances=None):
+    def start_cassandra(self, ssh_options, config_file, create_keyspaces=False, instances=None):
         if instances is None:
             instances = self.get_instances()
 
@@ -329,7 +341,7 @@ class CassandraService(ServicePlugin):
                 self.logger.warn("Return code for 'nodetool ring' on '%s': %d" % (temp_instances[-1].id, retcode))
 
         if create_keyspaces:
-            self._create_keyspaces_from_definitions_file(instances[0], ssh_options)
+            self._create_keyspaces_from_definitions_file(instances[0], config_file, ssh_options)
         else:
             self.logger.debug("create_keyspaces is False. Skipping keyspace generation.")
         

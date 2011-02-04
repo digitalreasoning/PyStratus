@@ -161,7 +161,7 @@ where COMMAND and [OPTIONS] may be one of:
             sys.exit(1)
 
         print "Starting Cassandra service on %d instance(s)...please wait." % len(instances)
-        self.service.start_cassandra(options_dict.get('ssh_options'), instances=instances)
+        self.service.start_cassandra(options_dict.get('ssh_options'), options_dict.get('cassandra_config_file'), instances=instances)
 
     def print_ring(self, argv, options_dict):
         instances = self.service.get_instances()
