@@ -301,12 +301,13 @@ class CassandraService(ServicePlugin):
         instances = self.get_instances()
         tokens = self._get_evenly_spaced_tokens_for_n_instances(len(instances))
         self.logger.info("new token space: %s" % str(tokens))
-        for instance in instances :
-            token = tokens.pop()
+        for i in range(len(instances)) :
+            token = tokens[i]
+            instance = instances[i]
             self.logger.info("Moving instance %s to token %s" % (instance.id, token))
             retcode = self._run_nodetool(ssh_options, "move %s" % token, instance=instance)
             if retcode != 0 :
-                self.logger.warn("Move failed for instance %s..." % instance.id)
+                self.logger.warn("Move failed for instance %s with return code %d..." % (instance.id, retcode))
             else :
                 self.logger.info("Move succeeded for instance %s..." % instance.id)
 
