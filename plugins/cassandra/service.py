@@ -56,7 +56,6 @@ class CassandraService(ServicePlugin):
             self.logger.warn("Number of reported instance ids (%d) " \
                              "does not match requested number (%d)" % \
                              (len(instance_ids), instance_template.number))
-
         self.logger.debug("Waiting for %s instance(s) to start: %s" % \
             (instance_template.number, ", ".join(instance_ids)))
         time.sleep(1)
@@ -69,22 +68,30 @@ class CassandraService(ServicePlugin):
                 ",".join(instance_template.roles))
 
         instances = self.get_instances()
+        self.logger.debug("We have %d current instances...", len(instances))
+        new_instances = [instance for instance in instances if instance.id in instance_ids]
+        if(len(new_instances) != len(instance_ids)) :
+            raise Exception("Could only find %d new instances, expected %s" % (len(new_instances), str(instance_ids)))
 
-        self.logger.debug("Instances started: %s" % (str(instances),))
+        self.logger.debug("Instances started: %s" % (str(new_instances),))
         
         self._attach_storage(instance_template.roles)
+        new_cluster = (len(instances) == len(instance_ids))
         self._transfer_config_files(ssh_options,
                                     config_file, 
+                                    new_instances,
                                     keyspace_file,
-                                    instances=instances)
-        self.start_cassandra(ssh_options, create_keyspaces=(keyspace_file is not None), instances=instances)
+                                    new_cluster=new_cluster)
+        self.start_cassandra(ssh_options, create_keyspaces=(new_cluster and keyspace_file is not None), instances=new_instances)
     
-    def _transfer_config_files(self, ssh_options, config_file, keyspace_file=None,
-                                     instances=None):
+    def _transfer_config_files(self, ssh_options, config_file, instances,
+                                     keyspace_file=None, new_cluster=True):
         """
         """
-        if instances is None:
-            instances = self.get_instances()
+        # we need all instances for seeds, but we should only transfer to new instances!
+        all_instances = self.get_instances()
+
+        self.logger.debug("Set tokens: %s" % new_cluster)
 
         self.logger.debug("Waiting for %d Cassandra instance(s) to install..." % len(instances))
         for instance in instances:
@@ -92,13 +99,13 @@ class CassandraService(ServicePlugin):
 
         self.logger.debug("Copying configuration files to %d Cassandra instances..." % len(instances))
 
-        seed_ips = [str(instance.private_dns_name) for instance in instances[:2]]
+        seed_ips = [str(instance.private_dns_name) for instance in all_instances[:2]]
         tokens = self._get_evenly_spaced_tokens_for_n_instances(len(instances))
 
         # for each instance, generate a config file from the original file and upload it to
         # the cluster node
         for i in range(len(instances)):
-            local_file, remote_file = self._modify_config_file(instances[i], config_file, seed_ips, str(tokens[i]))
+            local_file, remote_file = self._modify_config_file(instances[i], config_file, seed_ips, str(tokens[i]), new_cluster)
 
             # Upload modified config file
             scp_command = 'scp %s -r %s root@%s:/usr/local/apache-cassandra/conf/%s' % (xstr(ssh_options),
@@ -108,7 +115,7 @@ class CassandraService(ServicePlugin):
             # delete temporary file
             os.unlink(local_file)
 
-        if keyspace_file:
+        if keyspace_file and new_cluster:
             keyspace_data = urllib.urlopen(keyspace_file).read()
             fd, temp_keyspace_file = tempfile.mkstemp(prefix="keyspaces.txt_", text=True)
             os.write(fd, keyspace_data)
@@ -140,7 +147,7 @@ class CassandraService(ServicePlugin):
             self.logger.debug("Sleeping for %d seconds..." % wait_time)
             time.sleep(wait_time)
 
-    def _modify_config_file(self, instance, config_file, seed_ips, token):
+    def _modify_config_file(self, instance, config_file, seed_ips, token, set_tokens):
         # XML (0.6.x) 
         if config_file.endswith(".xml"):
             remote_file = "storage-conf.xml"
@@ -162,11 +169,12 @@ class CassandraService(ServicePlugin):
                 seeds.append(seed)
 
             # Initial token
-            initial_token = xml.find("InitialToken")
-            if initial_token is None:
-                initial_token = Element("InitialToken")
-                xml.append(initial_token)
-            initial_token.text = token
+            if set_tokens is True :
+                initial_token = xml.find("InitialToken")
+                if initial_token is None:
+                    initial_token = Element("InitialToken")
+                    xml.append(initial_token)
+                initial_token.text = token
 
             # Logs
             commit_log_directory = xml.find("CommitLogDirectory")
@@ -212,7 +220,8 @@ class CassandraService(ServicePlugin):
 
             yaml = parse_yaml(urllib.urlopen(config_file))
             yaml['seeds'] = seed_ips
-            yaml['initial_token'] = token
+            if set_tokens is True :
+                yaml['initial_token'] = token
             yaml['data_file_directories'] = ['/mnt/cassandra-data']
             yaml['commitlog_directory'] = '/mnt/cassandra-logs'
             yaml['listen_address'] = str(instance.private_dns_name)

@@ -118,6 +118,9 @@ where COMMAND and [OPTIONS] may be one of:
                     print "The file defined by %s (%s) does not exist. Aborting." % (key, opt.get(key))
                     sys.exit(1)
 
+#        if self.service.get_instances() :
+#            print "This cluster is already running.  It must be terminated prior to being launched again."
+#            sys.exit(1)
 
         number_of_nodes = int(args[0])
         instance_template = InstanceTemplate(
