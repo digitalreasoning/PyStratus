@@ -20,7 +20,7 @@ where COMMAND and [OPTIONS] may be one of:
   ----------------------------------------------------------------------------------
   start-cassandra                     starts the cassandra service on all nodes
   stop-cassandra                      stops the cassandra service on all nodes
-  print-ring                          displays the cluster's ring information
+  print-ring [INSTANCE_IDX]           displays the cluster's ring information
   rebalance                           recalculates tokens evenly and moves nodes
 
                                CLUSTER COMMANDS
@@ -166,7 +166,10 @@ where COMMAND and [OPTIONS] may be one of:
             print "No running instances. Aborting."
             sys.exit(1)
 
-        self.service.print_ring(options_dict.get('ssh_options'), instances[0])
+        idx = 0
+        if len(argv) > 0 :
+            idx = int(argv[0])
+        self.service.print_ring(options_dict.get('ssh_options'), instances[idx])
 
     def rebalance(self, argv, options_dict):
         instances = self.service.get_instances()
