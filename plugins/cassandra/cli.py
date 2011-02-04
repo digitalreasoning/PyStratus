@@ -21,6 +21,7 @@ where COMMAND and [OPTIONS] may be one of:
   start-cassandra                     starts the cassandra service on all nodes
   stop-cassandra                      stops the cassandra service on all nodes
   print-ring                          displays the cluster's ring information
+  rebalance                           recalculates tokens evenly and moves nodes
 
                                CLUSTER COMMANDS
   ----------------------------------------------------------------------------------
@@ -83,6 +84,9 @@ where COMMAND and [OPTIONS] may be one of:
         elif self._command_name == "print-ring":
             self.print_ring(argv, options_dict)
 
+        elif self._command_name == "rebalance":
+            self.rebalance(argv, options_dict)
+
         else:
             self.print_help()
 
@@ -113,7 +117,7 @@ where COMMAND and [OPTIONS] may be one of:
                     raise
                     print "The file defined by %s (%s) does not exist. Aborting." % (key, opt.get(key))
                     sys.exit(1)
-        
+
 
         number_of_nodes = int(args[0])
         instance_template = InstanceTemplate(
@@ -163,6 +167,14 @@ where COMMAND and [OPTIONS] may be one of:
             sys.exit(1)
 
         self.service.print_ring(options_dict.get('ssh_options'), instances[0])
+
+    def rebalance(self, argv, options_dict):
+        instances = self.service.get_instances()
+        if not instances:
+            print "No running instances. Aborting."
+            sys.exit(1)
+
+        self.service.rebalance(options_dict.get('ssh_options'))
 
     def create_storage(self, argv, options_dict):
         opt, args = self.parse_options(self._command_name, argv, BASIC_OPTIONS,

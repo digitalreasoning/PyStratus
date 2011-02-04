@@ -258,14 +258,32 @@ class CassandraService(ServicePlugin):
         #subprocess.call(ssh_command, shell=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
 
     def print_ring(self, ssh_options, instance=None):
+        print "\nRing configuration..."
+        print "NOTE: May not be accurate if the cluster just started."
+        return self._run_nodetool(ssh_options, "ring", instance)
+
+    def _run_nodetool(self, ssh_options, ntcommand, instance=None):
         if instance is None:
           instance = self.get_instances()[0]
 
-        print "\nRing configuration..."
-        print "NOTE: May not be accurate if the cluster just started."
-        command = "/usr/local/apache-cassandra/bin/nodetool -h localhost ring"
+        self.logger.debug("running nodetool on instance %s", instance.id)
+        command = "/usr/local/apache-cassandra/bin/nodetool -h localhost %s" % ntcommand
         ssh_command = self._get_standard_ssh_command(instance, ssh_options, command)
         subprocess.call(ssh_command, shell=True)
+
+    def rebalance(self, ssh_options):
+        instances = self.get_instances()
+        tokens = self._get_evenly_spaced_tokens_for_n_instances(len(instances))
+        self.logger.info("new token space: %s" % str(tokens))
+        for instance in instances :
+            token = tokens.pop()
+            self.logger.info("Moving instance %s to token %s" % (instance.id, token))
+            retcode = self._run_nodetool(ssh_options, "move %s" % token, instance=instance)
+            if retcode != 0 :
+                self.logger.warn("Move failed for instance %s..." % instance.id)
+            else :
+                self.logger.info("Move succeeded for instance %s..." % instance.id)
+
 
     def start_cassandra(self, ssh_options, create_keyspaces=False, instances=None):
         if instances is None:
