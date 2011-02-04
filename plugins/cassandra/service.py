@@ -90,6 +90,11 @@ class CassandraService(ServicePlugin):
         """
         # we need all instances for seeds, but we should only transfer to new instances!
         all_instances = self.get_instances()
+        if new_cluster :
+            potential_seeds = all_instances
+        else :
+            potential_seeds = [instance for instance in all_instances if instance not in instances]
+
 
         self.logger.debug("Set tokens: %s" % new_cluster)
 
@@ -99,7 +104,7 @@ class CassandraService(ServicePlugin):
 
         self.logger.debug("Copying configuration files to %d Cassandra instances..." % len(instances))
 
-        seed_ips = [str(instance.private_dns_name) for instance in all_instances[:2]]
+        seed_ips = [str(instance.private_dns_name) for instance in potential_seeds[:2]]
         tokens = self._get_evenly_spaced_tokens_for_n_instances(len(instances))
 
         # for each instance, generate a config file from the original file and upload it to
