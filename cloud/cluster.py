@@ -22,17 +22,29 @@ from __future__ import with_statement
 import gzip
 import StringIO
 import urllib
+import providers
 
 from cloud.storage import Storage
 
-CLUSTER_PROVIDER_MAP = {
-  "ec2": ('cloud.providers.ec2', 'Ec2Cluster'),
-}
+CLUSTER_PROVIDER_MAP = {}
+
+def _build_provider_map() :
+    from pkgutil import iter_modules
+    it = iter_modules(providers.__path__, 'providers.')
+    for module in it :
+        try :
+            provider = __import__(module[1], globals(), locals(), ['CLOUD_PROVIDER']).CLOUD_PROVIDER
+        except :
+            pass
+        else :
+            CLUSTER_PROVIDER_MAP[provider[0]] = provider[1]
 
 def get_cluster(provider):
   """
   Retrieve the Cluster class for a provider.
   """
+  if not len(CLUSTER_PROVIDER_MAP):
+    _build_provider_map()
   mod_name, driver_name = CLUSTER_PROVIDER_MAP[provider]
   _mod = __import__(mod_name, globals(), locals(), [driver_name])
   return getattr(_mod, driver_name)

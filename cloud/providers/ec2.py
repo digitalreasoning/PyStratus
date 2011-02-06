@@ -36,6 +36,8 @@ import time
 
 logger = logging.getLogger(__name__)
 
+CLOUD_PROVIDER = ("ec2", ('cloud.providers.ec2', 'Ec2Cluster'))
+
 def _run_command_on_instance(instance, ssh_options, command):
   print "Running ssh %s root@%s '%s'" % \
     (ssh_options, instance.public_dns_name, command)
@@ -130,7 +132,7 @@ class Ec2Cluster(Cluster):
 
     for group in security_groups:
         if group not in all_groups:
-            self.ec2Connection.create_security_group(group, 
+            self.ec2Connection.create_security_group(group,
                  "Custom group: %s" % group)
 
   def _create_groups(self, role):
@@ -213,7 +215,7 @@ class Ec2Cluster(Cluster):
     for instance in self._get_instances(self._group_name_for_role(role),
                                         state_filter):
       instances.append(Instance(instance.id, role, instance.dns_name,
-                                instance.private_dns_name, 
+                                instance.private_dns_name,
                                 instance.launch_time,
                                 instance.instance_type,
                                 instance.placement))
@@ -237,7 +239,7 @@ class Ec2Cluster(Cluster):
             instance.dns_name, instance.private_dns_name,
             instance.state, xstr(instance.key_name), instance.instance_type,
             str(instance.launch_time), instance.placement)
-  
+
   def get_instances(self, roles=None, state_filter="running"):
     """
     Returns a list of Instance objects in this cluster
@@ -276,9 +278,9 @@ class Ec2Cluster(Cluster):
   def launch_instances(self, roles, number, image_id, size_id,
                        instance_user_data, **kwargs):
     for role in roles:
-      self._check_role_name(role)  
+      self._check_role_name(role)
       self._create_groups(role)
- 
+
     user_data = instance_user_data.read_as_gzip_stream()
     security_groups = self._get_group_names(roles) + kwargs.get('security_groups', [])
 
@@ -459,7 +461,7 @@ class Ec2Storage(Storage):
     storage_filename = self._get_storage_filename()
     volume_manager = JsonVolumeManager(storage_filename)
     return volume_manager.get_roles()
-  
+
   def _get_ec2_volumes_dict(self, mountable_volumes):
     volume_ids = [mv.volume_id for mv in sum(mountable_volumes, [])]
     volumes = self.cluster.ec2Connection.get_all_volumes(volume_ids)
@@ -513,7 +515,7 @@ class Ec2Storage(Storage):
 
     for vid in [v.volume_id for v in all_mountable_volumes]:
         try:
-            self.cluster.ec2Connection.get_all_volumes([vid])        
+            self.cluster.ec2Connection.get_all_volumes([vid])
         except:
             error = True
             print "Volume does not exist: %s" % vid
