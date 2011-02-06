@@ -463,6 +463,10 @@ def main():
         print_usage(sys.argv[0])
         sys.exit(1)
 
+def _install_path() :
+    import cloud
+    return os.path.realpath(cloud.__path__[0])
+
 if __name__ == "__main__":
     log_config = os.path.join(DEFAULT_CONFIG_DIR, "logging.conf")
     if os.path.isfile(log_config):
@@ -472,7 +476,8 @@ if __name__ == "__main__":
     # load the plugins after logging is set up 
     plugin_manager = PluginManager(categories_filter=dict(
                                    cli=CLIPlugin, service=ServicePlugin),
-                                   directories_list=[os.path.join(DEFAULT_CONFIG_DIR, "plugins")],
+                                   directories_list=[os.path.join(DEFAULT_CONFIG_DIR, "plugins"),
+                                                     os.path.join(_install_path(), "plugins")],
                                    plugin_info_ext="plugin")
     plugin_manager.locatePlugins()
     plugin_manager.loadPlugins()
