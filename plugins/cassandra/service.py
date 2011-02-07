@@ -31,6 +31,10 @@ except:
         from elementtree.ElementTree import parse as parse_xml
         from elementtree.ElementTree import Element
 
+def find_new_token(existing_tokens):
+    range = max(zip([(existing_tokens[-1] - 2**127)] + existing_tokens[:-1], existing_tokens[:]), key=lambda x: x[1] - x[0])
+    return range[0] + (range[1]-range[0])/2
+
 
 class CassandraService(ServicePlugin):
     """
@@ -46,11 +50,72 @@ class CassandraService(ServicePlugin):
     def get_instances(self):
         return self.cluster.get_instances_in_role(self.CASSANDRA_NODE, "running")
 
+    def _get_new_tokens_for_n_instances(self, existing_tokens, n):
+        all_tokens = existing_tokens[:]
+        for i in range(0, n):
+            all_tokens.sort()
+            new_token = find_new_token(all_tokens)
+            all_tokens.append(new_token)
+        return [token for token in all_tokens if token not in existing_tokens]
+
+    def expand_cluster(self, instance_template, ssh_options, config_file, existing_tokens):
+        instances = self.get_instances()
+        if instance_template.number > len(instances):
+            raise Exception("The best we can do is double the cluster size at one time.  Please specify %d instances or less." % len(instances))
+        if len(instances) != len(existing_tokens):
+            raise Exception("There are %d existing instances, we need that many existing tokens..." % len(instances))
+        instance_ids = self._launch_instances(instance_template)
+
+        if len(instance_ids) != instance_template.number:
+            self.logger.warn("Number of reported instance ids (%d) " \
+                             "does not match requested number (%d)" % \
+                             (len(instance_ids), instance_template.number))
+        self.logger.debug("Waiting for %s instance(s) to start: %s" % \
+            (instance_template.number, ", ".join(instance_ids)))
+        time.sleep(1)
+
+        try:
+            self.cluster.wait_for_instances(instance_ids)
+            self.logger.debug("%d instances started" % (instance_template.number,))
+        except TimeoutException:
+            self.logger.error("Timeout while waiting for %s instance to start." % \
+                ",".join(instance_template.roles))
+
+        instances = self.get_instances()
+        self.logger.debug("We have %d current instances...", len(instances))
+        new_instances = [instance for instance in instances if instance.id in instance_ids]
+        if(len(new_instances) != len(instance_ids)) :
+            raise Exception("Could only find %d new instances, expected %s" % (len(new_instances), str(instance_ids)))
+
+        self.logger.debug("Instances started: %s" % (str(new_instances),))
+
+        self._attach_storage(instance_template.roles)
+        new_tokens = self._get_new_tokens_for_n_instances([int(token) for token in existing_tokens], instance_template.number)
+
+        self._transfer_config_files(ssh_options,
+                                    config_file,
+                                    new_instances,
+                                    new_cluster=False,
+                                    tokens=new_tokens)
+        first = True
+        for instance in new_instances:
+            if not first:
+                self.logger.info("Waiting 2 minutes before starting the next instances...")
+                time.sleep(2*60)
+            else:
+                first = False
+            self.start_cassandra(ssh_options, config_file, create_keyspaces=False, instances=[instance], print_ring=False)
+        self.print_ring(ssh_options, instances[0])
+
+
     def launch_cluster(self, instance_template, ssh_options, config_file, 
                              keyspace_file=None):
         """
         """
-        instance_ids = self._launch_instances(instance_template) 
+        if self.get_instances() :
+            raise Exception("This cluster is already running.  It must be terminated prior to being launched again.")
+
+        instance_ids = self._launch_instances(instance_template)
 
         if len(instance_ids) != instance_template.number:
             self.logger.warn("Number of reported instance ids (%d) " \
@@ -85,7 +150,7 @@ class CassandraService(ServicePlugin):
         self.start_cassandra(ssh_options, config_file, create_keyspaces=(new_cluster and keyspace_file is not None), instances=new_instances)
     
     def _transfer_config_files(self, ssh_options, config_file, instances,
-                                     keyspace_file=None, new_cluster=True):
+                                     keyspace_file=None, new_cluster=True, tokens=None):
         """
         """
         # we need all instances for seeds, but we should only transfer to new instances!
@@ -96,8 +161,6 @@ class CassandraService(ServicePlugin):
             potential_seeds = [instance for instance in all_instances if instance not in instances]
 
 
-        self.logger.debug("Set tokens: %s" % new_cluster)
-
         self.logger.debug("Waiting for %d Cassandra instance(s) to install..." % len(instances))
         for instance in instances:
             self._wait_for_cassandra_install(instance, ssh_options)
@@ -105,12 +168,13 @@ class CassandraService(ServicePlugin):
         self.logger.debug("Copying configuration files to %d Cassandra instances..." % len(instances))
 
         seed_ips = [str(instance.private_dns_name) for instance in potential_seeds[:2]]
-        tokens = self._get_evenly_spaced_tokens_for_n_instances(len(instances))
+        if tokens == None :
+            tokens = self._get_evenly_spaced_tokens_for_n_instances(len(instances))
 
         # for each instance, generate a config file from the original file and upload it to
         # the cluster node
         for i in range(len(instances)):
-            local_file, remote_file = self._modify_config_file(instances[i], config_file, seed_ips, str(tokens[i]), new_cluster)
+            local_file, remote_file = self._modify_config_file(instances[i], config_file, seed_ips, str(tokens[i]))
 
             # Upload modified config file
             scp_command = 'scp %s -r %s root@%s:/usr/local/apache-cassandra/conf/%s' % (xstr(ssh_options),
@@ -152,7 +216,7 @@ class CassandraService(ServicePlugin):
             self.logger.debug("Sleeping for %d seconds..." % wait_time)
             time.sleep(wait_time)
 
-    def _modify_config_file(self, instance, config_file, seed_ips, token, set_tokens):
+    def _modify_config_file(self, instance, config_file, seed_ips, token, set_tokens=True):
         # XML (0.6.x) 
         if config_file.endswith(".xml"):
             remote_file = "storage-conf.xml"
@@ -312,7 +376,7 @@ class CassandraService(ServicePlugin):
                 self.logger.info("Move succeeded for instance %s..." % instance.id)
 
 
-    def start_cassandra(self, ssh_options, config_file, create_keyspaces=False, instances=None):
+    def start_cassandra(self, ssh_options, config_file, create_keyspaces=False, instances=None, print_ring=True):
         if instances is None:
             instances = self.get_instances()
 
@@ -353,7 +417,8 @@ class CassandraService(ServicePlugin):
         
         # TODO: Do I need to wait for the keyspaces to propagate before printing the ring?
         # print ring after everything started
-        self.print_ring(ssh_options, instances[0])
+        if print_ring:
+            self.print_ring(ssh_options, instances[0])
 
         self.logger.debug("Startup complete.")
 
