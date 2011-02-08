@@ -96,7 +96,7 @@ class CassandraService(ServicePlugin):
         if(len(new_instances) != len(instance_ids)) :
             raise Exception("Could only find %d new instances, expected %s" % (len(new_instances), str(instance_ids)))
 
-        self.logger.debug("Instances started: %s" % (str(new_instances),))
+        self.logger.info("Instances started: %s" % (str(new_instances),))
 
         self._attach_storage(instance_template.roles)
         new_tokens = self._get_new_tokens_for_n_instances([int(token) for token in existing_tokens], instance_template.number)
@@ -109,10 +109,11 @@ class CassandraService(ServicePlugin):
         first = True
         for instance in new_instances:
             if not first:
-                self.logger.info("Waiting 2 minutes before starting the next instances...")
+                self.logger.info("Waiting 2 minutes before starting the next instance...")
                 time.sleep(2*60)
             else:
                 first = False
+            self.logger.info("Starting cassandra on instance %s." % instance.id)
             self.start_cassandra(ssh_options, config_file, create_keyspaces=False, instances=[instance], print_ring=False)
         self.print_ring(ssh_options, instances[0])
 
@@ -358,7 +359,7 @@ class CassandraService(ServicePlugin):
 
     def print_ring(self, ssh_options, instance=None):
         print "\nRing configuration..."
-        print "NOTE: May not be accurate if the cluster just started."
+        print "NOTE: May not be accurate if the cluster just started or expanded."
         return self._run_nodetool(ssh_options, "ring", instance)
 
     def _run_nodetool(self, ssh_options, ntcommand, instance=None, return_output=False):
@@ -379,13 +380,23 @@ class CassandraService(ServicePlugin):
             return proc.wait()
 
     def _discover_ring(self, ssh_options, instance=None):
+        parsers = [
+        ('Address         Status State   Load            Owns    Token                                       \n', parse_nodeline, 2),
+         None
+        ]
         self.logger.debug("discovering ring...")
         retcode, output = self._run_nodetool(ssh_options, "ring", instance, True)
         self.logger.debug("node tool returned %d" % retcode)
-        nodelines = output.readlines()[2:]
+        lines = output.readlines()
+        for parse_info in parsers :
+            if parse_info is None:
+                raise Exception("I don't recognize the nodetool output - no parser found.")
+            if lines[0] == parse_info[0]:
+                break
+        nodelines = lines[parse_info[2]:]
         self.logger.debug("found %d nodes" % len(nodelines))
         output.close()
-        return [parse_nodeline(nodeline) for nodeline in nodelines]
+        return [parse_info[1](nodeline) for nodeline in nodelines]
 
     def rebalance(self, ssh_options):
         instances = self.get_instances()
