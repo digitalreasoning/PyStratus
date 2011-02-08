@@ -95,7 +95,7 @@ where COMMAND and [OPTIONS] may be one of:
             self.print_help()
 
     def expand_cluster(self, argv, options_dict):
-        expected_arguments = ["NUM_INSTANCES", "TOKEN*"]
+        expected_arguments = ["NUM_INSTANCES"]
         opt, args = self.parse_options(self._command_name,
                                        argv,
                                        expected_arguments=expected_arguments,
@@ -138,8 +138,7 @@ where COMMAND and [OPTIONS] may be one of:
 
         self.service.expand_cluster(instance_template,
                                     opt.get('ssh_options'),
-                                    opt.get('cassandra_config_file'),
-                                    args[1:])
+                                    opt.get('cassandra_config_file'))
 
     def launch_cluster(self, argv, options_dict):
         """

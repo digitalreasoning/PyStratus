@@ -35,6 +35,13 @@ def find_new_token(existing_tokens):
     range = max(zip([(existing_tokens[-1] - 2**127)] + existing_tokens[:-1], existing_tokens[:]), key=lambda x: x[1] - x[0])
     return range[0] + (range[1]-range[0])/2
 
+def parse_nodeline(nodeline) :
+    ip = nodeline[0:15].strip()
+    status = nodeline[16:22].strip()
+    state = nodeline[23:30].strip()
+    load = nodeline[31:46].strip()
+    token = long(nodeline[55:-1].strip())
+    return {'ip':ip, 'status':status, 'state':state, 'load':load, 'token':token}
 
 class CassandraService(ServicePlugin):
     """
@@ -58,10 +65,12 @@ class CassandraService(ServicePlugin):
             all_tokens.append(new_token)
         return [token for token in all_tokens if token not in existing_tokens]
 
-    def expand_cluster(self, instance_template, ssh_options, config_file, existing_tokens):
+    def expand_cluster(self, instance_template, ssh_options, config_file):
         instances = self.get_instances()
         if instance_template.number > len(instances):
             raise Exception("The best we can do is double the cluster size at one time.  Please specify %d instances or less." % len(instances))
+        existing_tokens = [node['token'] for node in self._discover_ring(ssh_options)]
+        self.logger.debug("Tokens: %s" % str(existing_tokens))
         if len(instances) != len(existing_tokens):
             raise Exception("There are %d existing instances, we need that many existing tokens..." % len(instances))
         instance_ids = self._launch_instances(instance_template)
@@ -352,14 +361,31 @@ class CassandraService(ServicePlugin):
         print "NOTE: May not be accurate if the cluster just started."
         return self._run_nodetool(ssh_options, "ring", instance)
 
-    def _run_nodetool(self, ssh_options, ntcommand, instance=None):
+    def _run_nodetool(self, ssh_options, ntcommand, instance=None, return_output=False):
         if instance is None:
           instance = self.get_instances()[0]
 
         self.logger.debug("running nodetool on instance %s", instance.id)
         command = "/usr/local/apache-cassandra/bin/nodetool -h localhost %s" % ntcommand
         ssh_command = self._get_standard_ssh_command(instance, ssh_options, command)
-        subprocess.call(ssh_command, shell=True)
+        if return_output :
+            stdout = subprocess.PIPE
+        else :
+            stdout = None
+        proc = subprocess.Popen(ssh_command, shell=True, stdout=stdout)
+        if return_output:
+            return (proc.wait(), proc.stdout)
+        else:
+            return proc.wait()
+
+    def _discover_ring(self, ssh_options, instance=None):
+        self.logger.debug("discovering ring...")
+        retcode, output = self._run_nodetool(ssh_options, "ring", instance, True)
+        self.logger.debug("node tool returned %d" % retcode)
+        nodelines = output.readlines()[2:]
+        self.logger.debug("found %d nodes" % len(nodelines))
+        output.close()
+        return [parse_nodeline(nodeline) for nodeline in nodelines]
 
     def rebalance(self, ssh_options):
         instances = self.get_instances()
