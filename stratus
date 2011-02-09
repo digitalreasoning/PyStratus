@@ -105,7 +105,7 @@ SNAPSHOT_OPTIONS = BASIC_OPTIONS[:] + [
 plugin_manager = None
 
 def parse_options_and_config(command, option_list=[], extra_arguments=(),
-                             unbounded_args=False):
+                             unbounded_args=False, description=None):
   """
   Parse the arguments to command using the given option list, and combine with
   any configuration parameters.
@@ -118,7 +118,7 @@ def parse_options_and_config(command, option_list=[], extra_arguments=(),
   expected_arguments = ["CLUSTER",]
   expected_arguments.extend(extra_arguments)
   (options_dict, args) = parse_options(command, option_list, expected_arguments,
-                                       unbounded_args)
+                                       unbounded_args, description=description)
 
   config_dir = get_config_dir(options_dict)
   config_files = [os.path.join(config_dir, CONFIG_FILENAME)]
@@ -170,7 +170,7 @@ def load_plugins(cluster_name, cloud_provider, service_type, region, config_dir)
   return cli, service
 
 def parse_options(command, option_list=[], expected_arguments=(),
-                  unbounded_args=False):
+                  unbounded_args=False, description=None):
   """
   Parse the arguments to command using the given option list.
 
@@ -179,14 +179,18 @@ def parse_options(command, option_list=[], expected_arguments=(),
   Otherwise there must be exactly the same number of arguments as
   extra_arguments.
   """
+  if description is None:
+      description=""
+  else:
+      description+="\n\n"
 
   config_file_name = "%s/%s" % (DEFAULT_CONFIG_DIR, CONFIG_FILENAME)
   usage = """%%prog %s [options] %s
 
-Options may also be specified in a configuration file called
+%sOptions may also be specified in a configuration file called
 %s located in the user's home directory.
 Options specified on the command line take precedence over any in the
-configuration file.""" % (command, " ".join(expected_arguments),
+configuration file.""" % (command, " ".join(expected_arguments), description,
                           config_file_name)
   parser = OptionParser(usage=usage, version="%%prog %s" % VERSION,
                         option_list=option_list)
@@ -411,15 +415,20 @@ def main():
 
     # list
     if command == 'list':
-        (options_dict, args) = parse_options(command, LIST_CLUSTERS_OPTIONS)
+        (options_dict, args) = parse_options(command, LIST_CLUSTERS_OPTIONS,
+                                             description="List the available clusters.")
         list_clusters(options_dict, list_all=options_dict.get('all', False))
     elif command == 'list-storage':
-        (options_dict, args) = parse_options(command, LIST_STORAGE_OPTIONS)
+        (options_dict, args) = parse_options(command, LIST_STORAGE_OPTIONS,
+                                             description="List the storage volumes currently in use.")
         list_storage(options_dict)
     elif command == 'exec':
-        (options_dict, args, cli) = parse_options_and_config(command, 
+        exec_description = """Executes the CMD for a given cluster name CLUSTER with OPTIONS. Leave CMD
+out to see a list of valid commands and arguments."""
+        (options_dict, args, cli) = parse_options_and_config(command,
                                                              BASIC_OPTIONS,
-                                                             unbounded_args=True)
+                                                             unbounded_args=True,
+                                                             description=exec_description)
 
         if cli is None:
             print "Unable to find a suitable plugin for service type: %s" % options_dict.get('service_type')
@@ -427,9 +436,12 @@ def main():
 
         cli.execute_command(args, options_dict)
     elif command == 'create-formatted-snapshot':
-        (options_dict, args) = parse_options(command, 
+        snapshot_description = """Create an empty, formatted snapshot of size SIZE in GB (see help for
+required options)."""
+        (options_dict, args) = parse_options(command,
                                              SNAPSHOT_OPTIONS,
-                                             ["SIZE"])
+                                             ["SIZE"],
+                                             description=snapshot_description)
 
         for key in ['availability_zone', 'region', 'key_name', 'private_key']:
             if not options_dict.get(key):
