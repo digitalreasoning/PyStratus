@@ -398,6 +398,13 @@ class CassandraService(ServicePlugin):
         output.close()
         return [parse_info[1](nodeline) for nodeline in nodelines]
 
+    def remove_down_nodes(self, ssh_options, instance=None):
+        nodes = self._discover_ring(ssh_options, instance)
+        for node in nodes:
+            if node['status'] == 'Down' and node['state'] == 'Normal':
+                print "Removing node %s." % node['token']
+                self._run_nodetool(ssh_options, 'removetoken %s' % node['token'], instance)
+
     def rebalance(self, ssh_options):
         instances = self.get_instances()
         tokens = self._get_evenly_spaced_tokens_for_n_instances(len(instances))

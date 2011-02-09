@@ -22,12 +22,13 @@ where COMMAND and [OPTIONS] may be one of:
   stop-cassandra                      stops the cassandra service on all nodes
   print-ring [INSTANCE_IDX]           displays the cluster's ring information
   rebalance                           recalculates tokens evenly and moves nodes
+  remove-down-nodes                   removes nodes that are down from the ring
 
                                CLUSTER COMMANDS
   ----------------------------------------------------------------------------------
   details                             list instances in CLUSTER
   launch-cluster NUM_NODES            launch NUM_NODES Cassandra nodes
-  expand-cluster NUM_NODES TOKENS*    adds new nodes, requires list of current tokens
+  expand-cluster NUM_NODES            adds new nodes
   terminate-cluster                   terminate all instances in CLUSTER
   login                               log in to the master in CLUSTER over SSH
 
@@ -90,6 +91,9 @@ where COMMAND and [OPTIONS] may be one of:
 
         elif self._command_name == "rebalance":
             self.rebalance(argv, options_dict)
+
+        elif self._command_name == "remove-down-nodes":
+            self.remove_down_nodes(argv, options_dict)
 
         else:
             self.print_help()
@@ -231,6 +235,14 @@ where COMMAND and [OPTIONS] may be one of:
             sys.exit(1)
 
         self.service.rebalance(options_dict.get('ssh_options'))
+
+    def remove_down_nodes(self, argv, options_dict):
+        instances = self.service.get_instances()
+        if not instances:
+            print "No running instances. Aborting."
+            sys.exit(1)
+
+        self.service.remove_down_nodes(options_dict.get('ssh_options'))
 
     def create_storage(self, argv, options_dict):
         opt, args = self.parse_options(self._command_name, argv, BASIC_OPTIONS,
