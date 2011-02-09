@@ -400,7 +400,7 @@ def create_formatted_snapshot(size, ami, zone, region, key_name, ssh_options):
 def main():
 
     if "--version" in sys.argv:
-        print "Vesion: %s" % VERSION
+        print "stratus %s" % VERSION
         sys.exit(0)
 
     if len(sys.argv) < 2:
