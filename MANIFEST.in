@@ -1,1 +1,2 @@
 recursive-include example_scripts/ *
+recursive-include *.plugin
