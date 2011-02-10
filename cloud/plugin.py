@@ -388,7 +388,8 @@ class ServicePlugin(object):
         return zip(instances, retcodes)
 
     def _get_transfer_command(self, instance, file_name, ssh_options):
-        transfer_command = self._get_standard_ssh_command(instance, ssh_options, "cat > %s" % file_name) + " < %s" % file_name
+        transfer_command = "scp %s %s root@%s:" % (xstr(ssh_options), file_name, instance.public_dns_name)
+#        transfer_command = self._get_standard_ssh_command(instance, ssh_options, "cat > %s" % file_name) + " < %s" % file_name
         self.logger.debug("Transfer command: %s" % transfer_command)
         return transfer_command
 
