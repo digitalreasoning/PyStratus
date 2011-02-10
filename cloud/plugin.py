@@ -1,4 +1,6 @@
+import itertools
 import os
+import subprocess
 import sys
 import logging
 import time
@@ -230,6 +232,37 @@ class CLIPlugin(IPlugin):
             except ValueError:
                 print "Not a valid choice. Try again."
 
+    def transfer_files(self, argv, options_dict):
+        opt, args = self.parse_options(self._command_name, argv, expected_arguments=['FILE_NAME*'], unbounded_args=True)
+        result = self.service.transfer_files(args, options_dict.get('ssh_options'))
+
+        table = PrettyTable()
+        table.set_field_names(("INSTANCE ID", "PUBLIC IP", "PRIVATE IP", "FILE NAME", "RESULT"))
+        for instance, file, retcode in result:
+            table.add_row((instance.id,
+                           instance.public_dns_name,
+                           instance.private_dns_name,
+                           file,
+                           retcode
+                           ))
+        table.printt()
+
+    def run_command(self, argv, options_dict):
+        opt, args = self.parse_options(self._command_name, argv, expected_arguments=['COMMAND'])
+        result = self.service.run_command(args[0], options_dict.get('ssh_options'))
+
+        table = PrettyTable()
+        table.set_field_names(("INSTANCE ID", "PUBLIC IP", "PRIVATE IP", "RESULT"))
+        for instance, retcode in result:
+            table.add_row((instance.id,
+                           instance.public_dns_name,
+                           instance.private_dns_name,
+                           retcode
+                           ))
+        table.printt()
+
+
+
 class ServicePlugin(object):
     def __init__(self, cluster=None):
         self.cluster = cluster
@@ -345,4 +378,25 @@ class ServicePlugin(object):
     def create_storage(self, role, number_of_instances, availability_zone, spec_file):
         storage = self.get_storage()
         storage.create(role, number_of_instances, availability_zone, spec_file)
-     
+
+    def run_command(self, command, ssh_options):
+        instances = self.get_instances()
+        ssh_commands = [self._get_standard_ssh_command(instance, ssh_options=ssh_options, remote_command=command)
+                    for instance in instances]
+        procs = [subprocess.Popen(ssh_command, shell=True) for ssh_command in ssh_commands]
+        retcodes = [proc.wait() for proc in procs]
+        return zip(instances, retcodes)
+
+    def _get_transfer_command(self, instance, file_name, ssh_options):
+        transfer_command = self._get_standard_ssh_command(instance, ssh_options, "cat > %s" % file_name) + " < %s" % file_name
+        self.logger.debug("Transfer command: %s" % transfer_command)
+        return transfer_command
+
+    def transfer_files(self, file_names, ssh_options):
+        instances = self.get_instances()
+        operations = list(itertools.product(instances, file_names))
+        ssh_commands = [self._get_transfer_command(instance, file_name, ssh_options) for instance, file_name in
+                        operations]
+        procs = [subprocess.Popen(ssh_command, shell=True) for ssh_command in ssh_commands]
+        retcodes = [proc.wait() for proc in procs]
+        return [(operation[0], operation[1], retcode) for operation, retcode in zip(operations, retcodes)]

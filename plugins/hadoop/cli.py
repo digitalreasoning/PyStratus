@@ -64,6 +64,12 @@ where COMMAND and [OPTIONS] may be one of:
         elif self._command_name == "login":
             self.login(argv, options_dict)
 
+        elif self._command_name == "run-command":
+            self.run_command(argv, options_dict)
+
+        elif self._command_name == "transfer-files":
+            self.transfer_files(argv, options_dict)
+
         elif self._command_name == "create-storage":
             self.create_storage(argv, options_dict)
 
