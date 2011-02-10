@@ -37,13 +37,23 @@ echo "export %ENV%" >> ~root/.bash_profile
 echo "export %ENV%" >> ~root/.bashrc
 
 DEFAULT_CASSANDRA_URL="http://mirror.cloudera.com/apache/cassandra/0.6.4/apache-cassandra-0.6.4-bin.tar.gz"
+PUBLIC_HOSTNAME=`wget -q -O - http://169.254.169.254/latest/meta-data/public-hostname`
 CASSANDRA_HOME_ALIAS=/usr/local/apache-cassandra
-DEFAULT_JNA_URL="https://jna.dev.java.net/source/browse/*checkout*/jna/tags/3.2.7/jnalib/dist/jna.jar?rev=1138"
+DEFAULT_JNA_URL="http://java.net/projects/jna/sources/svn/content/tags/3.2.7/jnalib/dist/jna.jar?rev=1182"
+if [ -z INSTALL_JNA ]; then
+    INSTALL_JNA=1
+fi
+if [ -z PUBLIC_JMX ]; then
+    PUBLIC_JMX=0
+fi
 
 function install_jna() {
+    if [ $INSTALL_JNA -eq 0 ]; then
+        return
+    fi
     curl="curl --retry 3 --silent --show-error --fail"
-    if [ ! -z "$JNA_URL" ]; then
-        DEFAULT_JNA_URL=$JNA_URL
+    if [ -z "$JNA_URL" ]; then
+        JNA_URL=$DEFAULT_JNA_URL
     fi
 
     $curl -o "jna.jar" $DEFAULT_JNA_URL
@@ -113,6 +123,10 @@ function configure_cassandra() {
         # startup
         if [ -z "$MAX_HEAP_SIZE" ]
         then
+            JVM_OPTS="-XX:+PrintGCApplicationStoppedTime -XX:HeapDumpPath=/mnt"
+            if [ $PUBLIC_JMX -gt 0 ]; then
+                JVM_OPTS="$JVM_OPTS -Djava.rmi.server.hostname="$PUBLIC_HOSTNAME
+            fi
             INSTANCE_TYPE=`wget -q -O - http://169.254.169.254/latest/meta-data/instance-type`
             case $INSTANCE_TYPE in
             m1.xlarge|m2.xlarge)
@@ -129,6 +143,8 @@ function configure_cassandra() {
             # write it to the profile
             echo "export MAX_HEAP_SIZE=$MAX_HEAP_SIZE" >> ~root/.bash_profile
             echo "export MAX_HEAP_SIZE=$MAX_HEAP_SIZE" >> ~root/.bashrc
+            echo "export JVM_OPTS=\"$JVM_OPTS\"" >> ~root/.bash_profile
+            echo "export JVM_OPTS=\"$JVM_OPTS\"" >> ~root/.bashrc
         fi
     else
         write_cassandra_in_sh_file
@@ -186,19 +202,19 @@ EOF
   m1.xlarge|m2.xlarge)
     cat >> $SETTINGS_FILE <<EOF
 # Arguments to pass to the JVM
-JVM_OPTS="-ea -Xms10G -Xmx10G -XX:+UseParNewGC -XX:+UseConcMarkSweepGC -XX:+CMSParallelRemarkEnabled -XX:SurvivorRatio=8 -XX:MaxTenuringThreshold=1 -XX:+HeapDumpOnOutOfMemoryError -Dcom.sun.management.jmxremote.port=8080 -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.authenticate=false"
+JVM_OPTS="-ea -Xms10G -Xmx10G -XX:+UseParNewGC -XX:+UseConcMarkSweepGC -XX:+CMSParallelRemarkEnabled -XX:SurvivorRatio=8 -XX:MaxTenuringThreshold=1 -XX:+HeapDumpOnOutOfMemoryError -Dcom.sun.management.jmxremote.port=8080 -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.authenticate=false -Djava.rmi.server.hostname="$HOSTNAME
 EOF
     ;;
   m1.large|c1.xlarge)
     cat >> $SETTINGS_FILE <<EOF
 # Arguments to pass to the JVM
-JVM_OPTS="-ea -Xms5G -Xmx5G -XX:+UseParNewGC -XX:+UseConcMarkSweepGC -XX:+CMSParallelRemarkEnabled -XX:SurvivorRatio=8 -XX:MaxTenuringThreshold=1 -XX:+HeapDumpOnOutOfMemoryError -Dcom.sun.management.jmxremote.port=8080 -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.authenticate=false"
+JVM_OPTS="-ea -Xms5G -Xmx5G -XX:+UseParNewGC -XX:+UseConcMarkSweepGC -XX:+CMSParallelRemarkEnabled -XX:SurvivorRatio=8 -XX:MaxTenuringThreshold=1 -XX:+HeapDumpOnOutOfMemoryError -Dcom.sun.management.jmxremote.port=8080 -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.authenticate=false -Djava.rmi.server.hostname="$HOSTNAME
 EOF
     ;;
   *)
     cat >> $SETTINGS_FILE <<EOF
 # Arguments to pass to the JVM
-JVM_OPTS="-ea -Xms256M -Xmx1G -XX:+UseParNewGC -XX:+UseConcMarkSweepGC -XX:+CMSParallelRemarkEnabled -XX:SurvivorRatio=8 -XX:MaxTenuringThreshold=1 -XX:+HeapDumpOnOutOfMemoryError -Dcom.sun.management.jmxremote.port=8080 -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.authenticate=false"
+JVM_OPTS="-ea -Xms256M -Xmx1G -XX:+UseParNewGC -XX:+UseConcMarkSweepGC -XX:+CMSParallelRemarkEnabled -XX:SurvivorRatio=8 -XX:MaxTenuringThreshold=1 -XX:+HeapDumpOnOutOfMemoryError -Dcom.sun.management.jmxremote.port=8080 -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.authenticate=false -Djava.rmi.server.hostname="$HOSTNAME
 EOF
     ;;
   esac
