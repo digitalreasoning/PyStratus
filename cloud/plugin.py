@@ -122,6 +122,12 @@ class CLIPlugin(IPlugin):
                 print "Terminating cluster..."
                 self.service.terminate_cluster()
 
+    def simple_print_instances(self, argv, options_dict):
+        opt, fields = self.parse_options(self._command_name, argv, expected_arguments=['FIELD*'], unbounded_args=True)
+
+        for instance in self.service.get_instances():
+            print("|".join([instance.__getattribute__(field) for field in fields]))
+
     def print_instances(self):
         if not self.service.get_instances():
             print "No running instances. Aborting."

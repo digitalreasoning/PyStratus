@@ -59,6 +59,9 @@ where COMMAND and [OPTIONS] may be one of:
         if self._command_name == "details":
             self.print_instances()
 
+        elif self._command_name == "simple-details":
+            self.simple_print_instances(argv, options_dict)
+
         elif self._command_name == "terminate-cluster":
             self.terminate_cluster(argv, options_dict)
 
