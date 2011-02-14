@@ -65,14 +65,19 @@ class CassandraService(ServicePlugin):
             all_tokens.append(new_token)
         return [token for token in all_tokens if token not in existing_tokens]
 
-    def expand_cluster(self, instance_template, ssh_options, config_file):
+    def expand_cluster(self, instance_template, ssh_options, config_file, new_tokens=None):
         instances = self.get_instances()
         if instance_template.number > len(instances):
             raise Exception("The best we can do is double the cluster size at one time.  Please specify %d instances or less." % len(instances))
-        existing_tokens = [node['token'] for node in self._discover_ring(ssh_options)]
-        self.logger.debug("Tokens: %s" % str(existing_tokens))
-        if len(instances) != len(existing_tokens):
-            raise Exception("There are %d existing instances, we need that many existing tokens..." % len(instances))
+        if new_tokens is None:
+            existing_tokens = [node['token'] for node in self._discover_ring(ssh_options)]
+            self.logger.debug("Tokens: %s" % str(existing_tokens))
+            if len(instances) != len(existing_tokens):
+                raise Exception("There are %d existing instances, we need that many existing tokens..." % len(instances))
+            new_tokens = self._get_new_tokens_for_n_instances([int(token) for token in existing_tokens], instance_template.number)
+        elif len(new_tokens) != instance_template.number:
+            raise Exception("We are creating %d new instances, we need that many new tokens..." % instance_template.number)
+
         instance_ids = self._launch_instances(instance_template)
 
         if len(instance_ids) != instance_template.number:
@@ -99,7 +104,6 @@ class CassandraService(ServicePlugin):
         self.logger.info("Instances started: %s" % (str(new_instances),))
 
         self._attach_storage(instance_template.roles)
-        new_tokens = self._get_new_tokens_for_n_instances([int(token) for token in existing_tokens], instance_template.number)
 
         self._transfer_config_files(ssh_options,
                                     config_file,
@@ -397,6 +401,10 @@ class CassandraService(ServicePlugin):
         self.logger.debug("found %d nodes" % len(nodelines))
         output.close()
         return [parse_info[1](nodeline) for nodeline in nodelines]
+
+    def calc_down_nodes(self, ssh_options, instance=None):
+        nodes = self._discover_ring(ssh_options, instance)
+        return [node['token'] for node in nodes if node['status'] == 'Down']
 
     def remove_down_nodes(self, ssh_options, instance=None):
         nodes = self._discover_ring(ssh_options, instance)
