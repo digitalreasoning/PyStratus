@@ -188,7 +188,7 @@ class CassandraService(ServicePlugin):
         # for each instance, generate a config file from the original file and upload it to
         # the cluster node
         for i in range(len(instances)):
-            local_file, remote_file = self._modify_config_file(instances[i], config_file, seed_ips, str(tokens[i]))
+            local_file, remote_file = self._modify_config_file(instances[i], config_file, seed_ips, str(tokens[i]), not new_cluster)
 
             # Upload modified config file
             scp_command = 'scp %s -r %s root@%s:/usr/local/apache-cassandra/conf/%s' % (xstr(ssh_options),
@@ -230,7 +230,7 @@ class CassandraService(ServicePlugin):
             self.logger.debug("Sleeping for %d seconds..." % wait_time)
             time.sleep(wait_time)
 
-    def _modify_config_file(self, instance, config_file, seed_ips, token, set_tokens=True):
+    def _modify_config_file(self, instance, config_file, seed_ips, token, set_tokens=True, auto_bootstrap=False):
         # XML (0.6.x) 
         if config_file.endswith(".xml"):
             remote_file = "storage-conf.xml"
@@ -305,6 +305,8 @@ class CassandraService(ServicePlugin):
             yaml['seeds'] = seed_ips
             if set_tokens is True :
                 yaml['initial_token'] = token
+            if auto_bootstrap :
+                yaml['auto_bootstrap'] = 'true'
             yaml['data_file_directories'] = ['/mnt/cassandra-data']
             yaml['commitlog_directory'] = '/mnt/cassandra-logs'
             yaml['listen_address'] = str(instance.private_dns_name)
@@ -405,6 +407,12 @@ class CassandraService(ServicePlugin):
     def calc_down_nodes(self, ssh_options, instance=None):
         nodes = self._discover_ring(ssh_options, instance)
         return [node['token'] for node in nodes if node['status'] == 'Down']
+
+    def replace_down_nodes(self, instance_template, ssh_options, config_file):
+        down_tokens = self.calc_down_nodes(ssh_options)
+        instance_template.number = len(down_tokens)
+        self.expand_cluster(instance_template, ssh_options, config_file, [x-1 for x in down_tokens])
+        self.remove_down_nodes(ssh_options)
 
     def remove_down_nodes(self, ssh_options, instance=None):
         nodes = self._discover_ring(ssh_options, instance)

@@ -177,8 +177,7 @@ where COMMAND and [OPTIONS] may be one of:
                     print "The file defined by %s (%s) does not exist. Aborting." % (key, opt.get(key))
                     sys.exit(1)
 
-        tokens = self.service.calc_down_nodes(opt.get('ssh_options'))
-        number_of_nodes = len(tokens)
+        number_of_nodes = len(self.service.calc_down_nodes(opt.get('ssh_options')))
         instance_template = InstanceTemplate(
             (self.service.CASSANDRA_NODE,),
             number_of_nodes,
@@ -194,12 +193,11 @@ where COMMAND and [OPTIONS] may be one of:
             opt.get('security_groups'))
 #        instance_template.add_env_strings(["CLUSTER_SIZE=%d" % number_of_nodes])
 
-        print "Expanding cluster by %d instance(s)...please wait." % number_of_nodes
+        print "Replacing %d down instance(s)...please wait." % number_of_nodes
 
-        self.service.expand_cluster(instance_template,
-                                    opt.get('ssh_options'),
-                                    opt.get('cassandra_config_file'),
-                                    tokens)
+        self.service.replace_down_nodes(instance_template,
+                                        opt.get('ssh_options'),
+                                        opt.get('cassandra_config_file'))
 
     def launch_cluster(self, argv, options_dict):
         """
