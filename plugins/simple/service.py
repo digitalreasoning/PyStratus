@@ -45,7 +45,23 @@ class SimpleService(ServicePlugin):
     def get_instances(self):
         return self.cluster.get_instances_in_role(self.SIMPLE_NODE, "running")
 
-    def expand_cluster(self, instance_template, ssh_options):
+    def _wait_for_install(self, instance, ssh_options, wait_dir):
+        """
+        Simply wait for the 'wait' directory to be available so that we can begin configuring
+        the service before starting it
+        """
+        wait_time = 3
+        command = "ls %s" % wait_dir
+        ssh_command = self._get_standard_ssh_command(instance, ssh_options, command)
+
+        while True:
+            retcode = subprocess.call(ssh_command, shell=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+            if retcode == 0:
+                break
+            self.logger.debug("Sleeping for %d seconds..." % wait_time)
+            time.sleep(wait_time)
+
+    def expand_cluster(self, instance_template, ssh_options, wait_dir):
         instances = self.get_instances()
 
         instance_ids = self._launch_instances(instance_template)
@@ -71,16 +87,18 @@ class SimpleService(ServicePlugin):
         if(len(new_instances) != len(instance_ids)) :
             raise Exception("Could only find %d new instances, expected %s" % (len(new_instances), str(instance_ids)))
 
+        for instance in instances:
+            self._wait_for_install(instance, ssh_options, wait_dir)
         self.logger.info("Instances started: %s" % (str(new_instances),))
 
 
-    def launch_cluster(self, instance_template, ssh_options):
+    def launch_cluster(self, instance_template, ssh_options, wait_dir):
         """
         """
         if self.get_instances() :
             raise Exception("This cluster is already running.  It must be terminated prior to being launched again.")
 
-        self.expand_cluster(instance_template, ssh_options)
+        self.expand_cluster(instance_template, ssh_options, wait_dir)
 
     def login(self, instance, ssh_options):
         ssh_command = self._get_standard_ssh_command(instance, ssh_options)

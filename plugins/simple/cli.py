@@ -16,6 +16,15 @@ class SimpleServiceCLI(CLIPlugin):
     USAGE = """Simple service usage: CLUSTER COMMAND [OPTIONS]
 where COMMAND and [OPTIONS] may be one of:
             
+                               APPLICATION COMMANDS
+  ----------------------------------------------------------------------------------
+  launch-load-balancer                launch a load balancer for CLUSTER
+  launch-nodes NUM_NODES              launch NUM_NODES nodes in CLUSTER
+  start-nodes                         start the nodes
+  stop-nodes                          stop the nodes
+  start-load-balancer                 start the load balancer
+  stop-load-balancer                  stop the load balancer
+
                                CLUSTER COMMANDS
   ----------------------------------------------------------------------------------
   details                             list instances in CLUSTER
@@ -102,7 +111,7 @@ where COMMAND and [OPTIONS] may be one of:
         print "Expanding cluster by %d instance(s)...please wait." % number_of_nodes
 
         self.service.expand_cluster(instance_template,
-                                    opt.get('ssh_options'))
+                                    opt.get('ssh_options'),opt.get('wait_dir', '/'))
 
     def launch_cluster(self, argv, options_dict):
         """
@@ -132,4 +141,4 @@ where COMMAND and [OPTIONS] may be one of:
         print "Launching cluster with %d instance(s)...please wait." % number_of_nodes
 
         self.service.launch_cluster(instance_template,
-                                    opt.get('ssh_options'))
+                                    opt.get('ssh_options'),opt.get('wait_dir', '/'))
