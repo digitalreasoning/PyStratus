@@ -54,6 +54,7 @@ class SimpleService(ServicePlugin):
         command = "ls %s" % wait_dir
         ssh_command = self._get_standard_ssh_command(instance, ssh_options, command)
 
+        self.logger.info("Waiting for install with command %s" % ssh_command)
         while True:
             retcode = subprocess.call(ssh_command, shell=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
             if retcode == 0:
