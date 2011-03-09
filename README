@@ -4,6 +4,8 @@ manage Hadoop, Cassandra, and other distributed services, thus PyStratus was bor
 to Cloudera for providing a great starting point for us!Currently only Amazon EC2 is supported, 
 but we hope to add new cloud providers very soon.
 
+There is an Ubuntu PPA available here: https://launchpad.net/~jared-bunting/+archive/pystratus
+
 To get up and running quickly you need the following:
 
 * Python 2.5+
