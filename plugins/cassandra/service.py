@@ -188,7 +188,11 @@ class CassandraService(ServicePlugin):
         # for each instance, generate a config file from the original file and upload it to
         # the cluster node
         for i in range(len(instances)):
-            local_file, remote_file = self._modify_config_file(instances[i], config_file, seed_ips, str(tokens[i]), not new_cluster)
+            local_file, remote_file = self._modify_config_file(instance=instances[i],
+                                                               config_file=config_file,
+                                                               seed_ips=seed_ips,
+                                                               token=str(tokens[i]),
+                                                               auto_bootstrap=not new_cluster)
 
             # Upload modified config file
             scp_command = 'scp %s -r %s root@%s:/usr/local/apache-cassandra/conf/%s' % (xstr(ssh_options),
