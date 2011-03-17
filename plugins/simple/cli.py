@@ -32,6 +32,13 @@ where COMMAND and [OPTIONS] may be one of:
   expand-cluster NUM_NODES            adds new nodes
   terminate-cluster                   terminate all instances in CLUSTER
   login                               log in to the master in CLUSTER over SSH
+
+                               STORAGE COMMANDS
+  ----------------------------------------------------------------------------------
+  list-storage                        list storage volumes for CLUSTER
+  create-storage NUM_INSTANCES        create volumes for NUM_INSTANCES instances
+    SPEC_FILE                           for CLUSTER, using SPEC_FILE
+  delete-storage                      delete all storage volumes for CLUSTER
 """
 #  transfer FILE DESTINATION           transfer a file to all nodes
 #  execute COMMAND                     execute a command on all nodes
@@ -75,6 +82,15 @@ where COMMAND and [OPTIONS] may be one of:
 
         elif self._command_name == "transfer-files":
             self.transfer_files(argv, options_dict)
+
+        elif self._command_name == "create-storage":
+            self.create_storage(argv, options_dict)
+
+        elif self._command_name == "delete-storage":
+            self.delete_storage(argv, options_dict)
+
+        elif self._command_name == "list-storage":
+            self.print_storage()
 
         else:
             self.print_help()
@@ -142,3 +158,21 @@ where COMMAND and [OPTIONS] may be one of:
 
         self.service.launch_cluster(instance_template,
                                     opt.get('ssh_options'),opt.get('wait_dir', '/'))
+
+    def create_storage(self, argv, options_dict):
+        opt, args = self.parse_options(self._command_name, argv, BASIC_OPTIONS,
+                                       ["NUM_INSTANCES", "SPEC_FILE"])
+        opt.update(options_dict)
+
+        role = self.service.SIMPLE_NODE
+        number_of_instances = int(args[0])
+        spec_file = args[1]
+
+        # FIXME
+        # check_options_set(opt, ['availability_zone'])
+
+        self.service.create_storage(role, 
+                                    number_of_instances,
+                                    opt.get('availability_zone'),
+                                    spec_file)
+        self.print_storage()

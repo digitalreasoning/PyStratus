@@ -132,7 +132,7 @@ def parse_options_and_config(command, option_list=[], extra_arguments=(),
                 ", ".join(read_files))
   cluster_name = args[0]
   if not config.has_section(cluster_name):
-      loggin.warn("No cluster named '%s' found configured.  See documentation on github for more information." % cluster_name)
+      logging.warn("No cluster named '%s' found configured.  See documentation on github for more information." % cluster_name)
   opt = merge_config_with_options(cluster_name, config, options_dict)
 
   # add in the config_dir
