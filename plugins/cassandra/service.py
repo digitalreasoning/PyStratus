@@ -47,6 +47,8 @@ class CassandraService(ServicePlugin):
     """
     """
     CASSANDRA_NODE = "cn"
+    MAX_RESTART_ATTEMPTS = 3
+    current_attempt = 1
 
     def __init__(self):
         super(CassandraService, self).__init__()
@@ -439,16 +441,50 @@ class CassandraService(ServicePlugin):
             else :
                 self.logger.info("Move succeeded for instance %s..." % instance.id)
 
+    def _validate_ring(self, instance, ssh_options):
+        """Run nodetool to verify that a ring is valid."""
 
-    def start_cassandra(self, ssh_options, config_file, create_keyspaces=False, instances=None, print_ring=True):
+        command = "/usr/local/apache-cassandra/bin/nodetool -h %s ring" % instance.private_dns_name
+        ssh_command = self._get_standard_ssh_command(instance, ssh_options, command)
+        retcode = 0
+        try:
+            # some nodes can be down, but nodetool will still exit cleanly,
+            # so doing some extra validation to ensure that all nodes of 
+            # the ring are "Up" and "Normal" and manually set a bad return 
+            # code otherwise
+            ring_output = subprocess.check_output(ssh_command, shell=True, stderr=subprocess.STDOUT)
+            for node in ring_output.splitlines()[3:]:
+                nodesplit = node.split()
+                self.logger.debug("Node %s is %s and %s" % (nodesplit[0], nodesplit[1], nodesplit[2]))
+                if nodesplit[1].lower() != "up" and nodesplit[2].lower() != "normal":
+                    self.logger.debug("Node %s ring is not healthy" % nodesplit[0])
+                    retcode = 200
+        except subprocess.CalledProcessError, e:
+            self.logger.debug(e)
+            retcode = e.returncode
+
+        return retcode
+
+    def start_cassandra(self, ssh_options, config_file, create_keyspaces=False, instances=None, print_ring=True, retry=False):
+
+        if retry:
+            self.logger.info("Attempting to start again (%s of %s)" % (self.current_attempt-1, self.MAX_RESTART_ATTEMPTS))
+            print("Cassandra failed to start - attempting to start again (%s of %s)" % (self.current_attempt-1, self.MAX_RESTART_ATTEMPTS))
+
         if instances is None:
             instances = self.get_instances()
 
         self.logger.debug("Starting Cassandra service on %d instance(s)..." % len(instances))
 
         for instance in instances:
-            # if checks to see if cassandra is already running 
-            command = "if [ ! -f /root/cassandra.pid ]; then `nohup /usr/local/apache-cassandra/bin/cassandra -p /root/cassandra.pid &> /root/cassandra.out &`; fi"
+            # check to see if a pidfile exists, AND that a process is running
+            # with that pid (protecting against stray pidfiles)
+            command = """if [[ ! $(ps aux | grep $(cat /root/cassandra.pid 2>/dev/null) 2>/dev/null | grep -v grep) ]]
+            then 
+                if [ -f /root/cassandra.pid ]; then rm -f /root/cassandra.pid; fi
+                nohup /usr/local/apache-cassandra/bin/cassandra -p /root/cassandra.pid &> /root/cassandra.out &
+            fi
+            """
             ssh_command = self._get_standard_ssh_command(instance, ssh_options, command)
             retcode = subprocess.call(ssh_command, shell=True)
 
@@ -463,16 +499,48 @@ class CassandraService(ServicePlugin):
         start_time = time.time()
         while len(temp_instances) > 0:
             if (time.time() - start_time >= timeout):
-                raise TimeoutException()
-            
-            command = "/usr/local/apache-cassandra/bin/nodetool -h %s ring" % temp_instances[-1].private_dns_name
-            ssh_command = self._get_standard_ssh_command(temp_instances[-1], ssh_options, command)
-            retcode = subprocess.call(ssh_command, shell=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+                if self.current_attempt <= self.MAX_RESTART_ATTEMPTS:
+                    self.logger.info("Cassandra startup has failed, trying again; retry number %s (%s remain)" %
+                        (self.current_attempt, self.MAX_RESTART_ATTEMPTS-self.current_attempt))
+                    self.current_attempt += 1
+                    self.stop_cassandra(ssh_options, instances)
+                    
+                    # cassandra needs some time to fully shutdown
+                    time.sleep(5)
+                    self.start_cassandra(ssh_options, config_file, create_keyspaces, instances, print_ring, retry=True)
+                    return
+                else:
+                    raise TimeoutException()
+           
+            # does the ring look ok?
+            ring_retcode = self._validate_ring(temp_instances[-1], ssh_options)
 
-            if retcode == 0:
+            # is gossip running?
+            command = "/usr/local/apache-cassandra/bin/nodetool -h %s info | grep Gossip | grep true" % temp_instances[-1].private_dns_name
+            ssh_command = self._get_standard_ssh_command(temp_instances[-1], ssh_options, command)
+            gossip_retcode = subprocess.call(ssh_command, shell=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+
+            # are the netstats looking ok?
+            command = '/usr/local/apache-cassandra/bin/nodetool -h %s netstats | grep "Mode: Normal"' % temp_instances[-1].private_dns_name
+            ssh_command = self._get_standard_ssh_command(temp_instances[-1], ssh_options, command)
+            netstats_retcode = subprocess.call(ssh_command, shell=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+
+            # is thrift running?
+            command = "/bin/netstat -an | grep 9160"
+            ssh_command = self._get_standard_ssh_command(temp_instances[-1], ssh_options, command)
+            thrift_retcode = subprocess.call(ssh_command, shell=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+
+            if ring_retcode == 0 and gossip_retcode == 0 and netstats_retcode == 0 and thrift_retcode == 0:
                 temp_instances.pop()
             else:
-                self.logger.warn("Return code for 'nodetool ring' on '%s': %d" % (temp_instances[-1].id, retcode))
+                if ring_retcode != 0:
+                    self.logger.warn("Return code for 'nodetool ring' on '%s': %d" % (temp_instances[-1].id, ring_retcode))
+                if gossip_retcode != 0:
+                    self.logger.warn("Return code for 'nodetool info | grep Gossip' on '%s': %d" % (temp_instances[-1].id, gossip_retcode))
+                if netstats_retcode != 0:
+                    self.logger.warn("Return code for 'nodetool netstats | grep Normal' on '%s': %d" % (temp_instances[-1].id, netstats_retcode))
+                if thrift_retcode != 0:
+                    self.logger.warn("Return code for 'netstat | grep 9160' (thrift) on '%s': %d" % (temp_instances[-1].id, thrift_retcode))
 
         if create_keyspaces:
             self._create_keyspaces_from_definitions_file(instances[0], config_file, ssh_options)
