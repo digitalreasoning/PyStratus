@@ -466,6 +466,14 @@ class CassandraService(ServicePlugin):
         return retcode
 
     def start_cassandra(self, ssh_options, config_file, create_keyspaces=False, instances=None, print_ring=True, retry=False):
+        """Start Cassandra services on instances.
+        To validate that Cassandra is running, this will check the output of
+        nodetool ring, make sure that gossip and thrift are running, and check
+        that nodetool info reports Normal mode.  If these tests do not pass
+        within the timeout threshold, it will retry up to
+        self.MAX_RESTART_ATTEMPTS times to restart.  If after meeting the max
+        allowed, it will raise a TimeoutException.
+        """
 
         if retry:
             self.logger.info("Attempting to start again (%s of %s)" % (self.current_attempt-1, self.MAX_RESTART_ATTEMPTS))
