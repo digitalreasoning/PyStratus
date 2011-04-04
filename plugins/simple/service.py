@@ -92,6 +92,8 @@ class SimpleService(ServicePlugin):
             self._wait_for_install(instance, ssh_options, wait_dir)
         self.logger.info("Instances started: %s" % (str(new_instances),))
 
+        self._attach_storage(instance_template.roles)
+
 
     def launch_cluster(self, instance_template, ssh_options, wait_dir):
         """
