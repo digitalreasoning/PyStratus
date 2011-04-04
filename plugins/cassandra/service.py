@@ -444,6 +444,10 @@ class CassandraService(ServicePlugin):
     def _validate_ring(self, instance, ssh_options):
         """Run nodetool to verify that a ring is valid."""
 
+        # remove ssh "nastygram" warnings since we need to parse
+        # the output (vs just looking at a return code)
+        ssh_options = " -q " + ssh_options
+
         command = "/usr/local/apache-cassandra/bin/nodetool -h %s ring" % instance.private_dns_name
         ssh_command = self._get_standard_ssh_command(instance, ssh_options, command)
         retcode = 0
