@@ -103,11 +103,6 @@ where COMMAND and [OPTIONS] may be one of:
                                        unbounded_args=True)
         opt.update(options_dict)
 
-        # check for the cassandra-specific files
-        if opt.get('cassandra_config_file') is None:
-            print "ERROR: No cassandra_config_file configured. Aborting."
-            sys.exit(1)
-
         number_of_nodes = int(args[0])
         instance_template = InstanceTemplate(
             (self.service.SIMPLE_NODE,),
