@@ -317,11 +317,16 @@ function configure_hadoop() {
   <value>$HADOOP_CONF_DIR/dfs.hosts</value>
   <final>true</final>
 </property-->
-<!--property>
+<property>
   <name>dfs.hosts.exclude</name>
-  <value>$HADOOP_CONF_DIR/dfs.hosts.exclude</value>
+  <value>$HADOOP_CONF_DIR/exclude</value>
   <final>true</final>
-</property-->
+</property>
+<property>
+  <name>mapred.hosts.exclude</name>
+  <value>$HADOOP_CONF_DIR/exclude</value>
+  <final>true</final>
+</property>
 <property>
   <name>dfs.name.dir</name>
   <value>$DFS_NAME_DIR</value>

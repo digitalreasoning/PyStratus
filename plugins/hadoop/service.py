@@ -3,17 +3,25 @@ from __future__ import with_statement
 import os
 import sys
 import time
+import datetime
 import subprocess
 import urllib
 import tempfile
 import socket
 import re
 
+from fabric.api import *
+
 from cloud.cluster import TimeoutException
 from cloud.service import InstanceTemplate
 from cloud.plugin import ServicePlugin 
 from cloud.util import xstr
 from cloud.util import url_get
+
+# fabric output settings
+output.running = False
+output.stdout = False
+output.stderr = False
 
 class HadoopService(ServicePlugin):
     """
@@ -37,8 +45,8 @@ class HadoopService(ServicePlugin):
         return self.cluster.get_instances_in_role(self.NAMENODE, "running") + \
                self.cluster.get_instances_in_role(self.DATANODE, "running")
 
-    def launch_cluster(self, instance_templates, client_cidr, config_dir):
-        number_of_tasktrackers = 0
+    def launch_cluster(self, instance_templates, client_cidr, config_dir, num_existing_tasktrackers=0):
+        number_of_tasktrackers = num_existing_tasktrackers
         roles = []
         for it in instance_templates:
           roles.extend(it.roles)
@@ -107,8 +115,86 @@ class HadoopService(ServicePlugin):
         except TimeoutException:
             print "Timeout while waiting for Hadoop to start. Please check logs on" + \
                   " cluster."
-        return self._get_jobtracker()
+        return self.get_jobtracker()
 
+    def terminate_nodes(self, nodes, options):
+        """Terminate a subset of nodes from a cluster.
+        nodes is a list of boto.ec2.instance.Instance objects"""
+
+        exclude_hosts = ""
+        for node in nodes:
+            print("Terminating instance %s ... " % node.id),
+            exclude_hosts += node.private_dns_name + "\n"
+            node.terminate()
+            print("done")
+
+        print("Removing nodes from hadoop ..."),
+        env.host_string = self.get_namenode().public_dns_name
+        env.user = "root"
+        env.key_filename = options["private_key"]
+        hadoop_home = self.get_hadoop_home(env.key_filename)
+        run('echo "%s" > %s/conf/exclude' % (exclude_hosts.strip(), hadoop_home))
+        fab_output = run("sudo -u hadoop %s/bin/hadoop dfsadmin -refreshNodes" % 
+            hadoop_home)
+        fab_output = run("sudo -u hadoop %s/bin/hadoop mradmin -refreshNodes" %
+            hadoop_home)
+        print("done")
+
+    def _extract_dfs(self, dfs_output):
+        """Clean up and extract some info from dfsadmin output."""
+        
+        # trim off the top cruft
+        dfs_lines = dfs_output.splitlines()
+        for line in dfs_lines:
+            if line.startswith("---"):
+                break
+        datanode_lines = dfs_lines[dfs_lines.index(line)+1:]
+        dfs_summary = datanode_lines[0]
+
+        # now pull out info for each node
+        nodes = []
+        node_info_lines = "\n".join(datanode_lines[2:]).split("\n\n\n")
+        for node in node_info_lines:
+            node_info = [{line.split(": ")[0].strip().lower():line.split(": ")[1].strip()} 
+                for line in node.splitlines()]
+            nodes.append(
+                {"private_ip": node_info[0]["name"].split(":")[0],
+                 "last_contact": time.strptime(
+                    node_info[8]["last contact"],"%a %b %d %H:%M:%S %Z %Y")})
+
+        return nodes
+
+    def find_dead_nodes(self, cluster_name, options):
+        """Find a list of nodes that are dead."""
+        instances = self.get_instances()
+        name_nodes = self.cluster.get_instances_in_role(self.NAMENODE, "running")
+        if not name_nodes:
+            print("No name node found.")
+            return False
+
+        env.host_string = name_nodes[0].public_dns_name
+        env.user = "root"
+        env.key_filename = options["private_key"]
+        fab_output = run("sudo -u hadoop %s/bin/hadoop dfsadmin -report" % 
+            self.get_hadoop_home(env.key_filename))
+
+        # list of hdfs nodes
+        dfs_nodes = self._extract_dfs(fab_output)
+        dead_nodes = []
+        for node in dfs_nodes:
+
+            # hadoop appears to consider a node dead if it loses the heartbeat
+            # for 630 seconds (10.5 minutes)
+            time_lapse = (datetime.timedelta(seconds=time.mktime(time.gmtime())) 
+                - datetime.timedelta(seconds=time.mktime(node["last_contact"])))
+            if time_lapse.seconds > 630:
+                for instance in instances:
+                    if instance.private_ip_address == node["private_ip"]:
+                        dead_nodes.append(instance)
+                        break
+
+        return dead_nodes
+        
     def login(self, instance, ssh_options):
         ssh_command = self._get_standard_ssh_command(instance, ssh_options)
         subprocess.call(ssh_command, shell=True)
@@ -118,23 +204,47 @@ class HadoopService(ServicePlugin):
         Replace characters in role name with ones allowed in bash variable names
         """
         return role.replace('+', '_').upper()
-    
+   
+    def get_hadoop_home(self, private_key):
+        """Find out what HADOOP_HOME is on the namenode.  You must provide the
+        private_key necessary to connect to the namenode."""
+        
+        if not private_key:
+            return None
 
-    def _get_namenode(self):
+        env.host_string = self.get_namenode().public_dns_name
+        env.user = "root"
+        env.key_filename = private_key
+        fab_output = run("echo $HADOOP_HOME")
+        return fab_output.rstrip() if fab_output else None
+
+    def get_namenode(self):
         instances = self.cluster.get_instances_in_role(self.NAMENODE, "running")
         if not instances:
           return None
         return instances[0]
 
-    def _get_jobtracker(self):
+    def get_jobtracker(self):
         instances = self.cluster.get_instances_in_role(self.JOBTRACKER, "running")
         if not instances:
           return None
         return instances[0]
+
+    def get_datanodes(self):
+        instances = self.cluster.get_instances_in_role(self.DATANODE, "running")
+        if not instances:
+            return None
+        return instances
+
+    def get_tasktrackers(self):
+        instances = self.cluster.get_instances_in_role(self.TASKTRACKER, "running")
+        if not instances:
+            return None
+        return instances
     
     def _create_client_hadoop_site_file(self, config_dir):
-        namenode = self._get_namenode()
-        jobtracker = self._get_jobtracker()
+        namenode = self.get_namenode()
+        jobtracker = self.get_jobtracker()
         cluster_dir = os.path.join(config_dir, ".hadoop", self.cluster.name)
         aws_access_key_id = os.environ['AWS_ACCESS_KEY_ID']
         aws_secret_access_key = os.environ['AWS_SECRET_ACCESS_KEY']
@@ -143,8 +253,8 @@ class HadoopService(ServicePlugin):
           os.makedirs(cluster_dir)
 
         params = {
-            'namenode': self._get_namenode().public_dns_name,
-            'jobtracker': self._get_jobtracker().public_dns_name,
+            'namenode': namenode.public_dns_name,
+            'jobtracker': jobtracker.public_dns_name,
             'aws_access_key_id': os.environ['AWS_ACCESS_KEY_ID'],
             'aws_secret_access_key': os.environ['AWS_SECRET_ACCESS_KEY']
         }
@@ -200,8 +310,8 @@ class HadoopService(ServicePlugin):
             client_cidrs = ("%s/32" % client_ip,)
         self.logger.debug("Client CIDRs: %s", client_cidrs)
 
-        namenode = self._get_namenode()
-        jobtracker = self._get_jobtracker()
+        namenode = self.get_namenode()
+        jobtracker = self.get_jobtracker()
 
         for client_cidr in client_cidrs:
             # Allow access to port 80 on namenode from client
@@ -223,8 +333,9 @@ class HadoopService(ServicePlugin):
     def _wait_for_hadoop(self, number, timeout=600):
         wait_time = 3
         start_time = time.time()
-        jobtracker = self._get_jobtracker()
+        jobtracker = self.get_jobtracker()
         if not jobtracker:
+            self.logger.debug("No jobtracker found")
             return
 
         self.logger.debug("Waiting for jobtracker to start...")
@@ -242,6 +353,8 @@ class HadoopService(ServicePlugin):
         if number > 0:
             self.logger.debug("Waiting for %d tasktrackers to start" % number)
             while actual_running < number:
+                self.logger.debug("actual_running: %s" % actual_running)
+                self.logger.debug("number: %s" % number)
                 if (time.time() - start_time >= timeout):
                     raise TimeoutException()
                 try:
@@ -251,6 +364,7 @@ class HadoopService(ServicePlugin):
                     previous_running = actual_running
                 except IOError:
                     pass
+            self.logger.debug("actual_running = number (%s = %s)" % (actual_running, number))
         
     # The optional ?type=active is a difference between Hadoop 0.18 and 0.20
     _NUMBER_OF_TASK_TRACKERS = re.compile(r'<a href="machines.jsp(?:\?type=active)?">(\d+)</a>')
@@ -267,7 +381,7 @@ class HadoopService(ServicePlugin):
         if instances is None:
             return None
 
-        namenode = self._get_namenode()
+        namenode = self.get_namenode()
         if namenode is None:
             self.logger.error("No namenode running. Aborting.")
             return None

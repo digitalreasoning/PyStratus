@@ -16,6 +16,7 @@ where COMMAND and [OPTIONS] may be one of:
   ----------------------------------------------------------------------------------
   launch-master                       launch or find a master in CLUSTER
   launch-slaves NUM_SLAVES            launch NUM_SLAVES slaves in CLUSTER
+  terminate-dead-nodes                find and terminate dead nodes in CLUSTER
 
                                CLUSTER COMMANDS
   ----------------------------------------------------------------------------------
@@ -64,6 +65,15 @@ where COMMAND and [OPTIONS] may be one of:
         elif self._command_name == "launch-cluster":
             self.launch_cluster(argv, options_dict)
 
+        elif self._command_name == "terminate-dead-nodes":
+            self.terminate_dead_nodes(argv, options_dict)
+
+        elif self._command_name == "launch-master":
+            self.launch_master(argv, options_dict)
+
+        elif self._command_name == "launch-slaves":
+            self.launch_slaves(argv, options_dict)
+
         elif self._command_name == "login":
             self.login(argv, options_dict)
 
@@ -81,15 +91,6 @@ where COMMAND and [OPTIONS] may be one of:
 
         elif self._command_name == "list-storage":
             self.print_storage()
-
-        elif self._command_name == "stop-cassandra":
-            self.stop_cassandra(argv, options_dict)
-
-        elif self._command_name == "start-cassandra":
-            self.start_cassandra(argv, options_dict)
-
-        elif self._command_name == "print-ring":
-            self.print_ring(argv, options_dict)
 
         else:
             self.print_help()
@@ -157,6 +158,120 @@ where COMMAND and [OPTIONS] may be one of:
 
         print "Browse the cluster at http://%s/" % jobtracker.public_dns_name
         self.logger.debug("Startup complete.")
+
+    def launch_master(self, argv, options_dict):
+        """Launch the master node of a CLUSTER."""
+
+        opt, args = self.parse_options(self._command_name, argv, BASIC_OPTIONS)
+        opt.update(options_dict)
+        
+        instance_templates = [
+            InstanceTemplate(
+                (
+                    self.service.NAMENODE, 
+                    self.service.SECONDARY_NAMENODE, 
+                    self.service.JOBTRACKER
+                ),
+                1,
+                opt.get('image_id'),
+                opt.get('instance_type'), 
+                opt.get('key_name'),
+                opt.get('public_key'), 
+                opt.get('user_data_file'),
+                opt.get('availability_zone'), 
+                opt.get('user_packages'),
+                opt.get('auto_shutdown'), 
+                opt.get('env'),
+                opt.get('security_groups')),
+            ]
+
+        print "Launching cluster master...please wait." 
+        jobtracker = self.service.launch_cluster(instance_templates, 
+                                                 opt.get('client_cidr'),
+                                                 opt.get('config_dir'))
+
+        if jobtracker is None:
+            print "An error occurred started the Hadoop service. Check the logs for more information."
+            sys.exit(1)
+
+        print "Browse the cluster at http://%s/" % jobtracker.public_dns_name
+        self.logger.debug("Startup complete.")
+
+    def launch_slaves(self, argv, options_dict):
+        """Launch slave/datanodes in CLUSTER."""
+
+        expected_arguments = ["NUM_SLAVES"]
+        opt, args = self.parse_options(self._command_name,
+                                       argv,
+                                       expected_arguments=expected_arguments)
+        opt.update(options_dict)
+
+        try:
+            number_of_slaves = int(args[0])
+        except ValueError:
+            print("Number of slaves must be an integer")
+            return
+
+        instance_templates = [
+            InstanceTemplate(
+                (
+                    self.service.DATANODE, 
+                    self.service.TASKTRACKER
+                ), 
+                number_of_slaves,
+                opt.get('image_id'),
+                opt.get('instance_type'),
+                opt.get('key_name'),
+                opt.get('public_key'),
+                opt.get('user_data_file'),
+                opt.get('availability_zone'),
+                opt.get('user_packages'),
+                opt.get('auto_shutdown'),
+                opt.get('env'),
+                opt.get('security_groups')),
+            ]
+
+        # @todo - this is originally passed in when creating a cluster from
+        # scratch, need to figure out what to do if we're growing a cluster
+        #instance_template.add_env_strings([
+        #    "CLUSTER_SIZE=%d" % (number_of_slaves+1)
+        #])
+
+        print("Launching %s slave%s for %s" % (number_of_slaves, 
+            "" if number_of_slaves==1 else "s", self._cluster_name))
+
+        # this is needed to filter the jobtracker/namenode down into
+        # hadoop-site.xml for the new nodes
+        namenode = self.service.get_namenode()
+        jobtracker = self.service.get_jobtracker()
+        for instance_template in instance_templates:
+            instance_template.add_env_strings([
+                "NN_HOST=%s" % namenode.public_dns_name,
+                "JT_HOST=%s" % jobtracker.public_dns_name,
+            ])
+
+        # I think this count can be wrong if run too soon after running
+        # terminate_dead_nodes
+        existing_tasktrackers = self.service.get_tasktrackers()
+        num_tasktrackers = len(existing_tasktrackers) if existing_tasktrackers else 0
+        self.service.launch_cluster(instance_templates, 
+            opt.get('client_cidr'), opt.get('config_dir'),
+            num_existing_tasktrackers=num_tasktrackers)
+
+    def terminate_dead_nodes(self, argv, options_dict):
+        """Find and terminate dead nodes in CLUSTER."""
+
+        opt, args = self.parse_options(self._command_name, argv, BASIC_OPTIONS)
+        opt.update(options_dict)
+
+        print("Looking for dead nodes in %s" % self._cluster_name)
+        dead_nodes = self.service.find_dead_nodes(self._cluster_name, opt)
+        if not dead_nodes:
+            print("No dead nodes found")
+            return 
+
+        print ("Found %s dead nodes" % len(dead_nodes))
+        self.service.terminate_nodes(dead_nodes, opt)
 
     def create_storage(self, argv, options_dict):
         opt, args = self.parse_options(self._command_name, argv, BASIC_OPTIONS,

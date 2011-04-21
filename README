@@ -16,6 +16,7 @@ To get up and running quickly you need the following:
 * dateutil
 * PyYAML
 * cElementTree or elementree
+* Fabric
 
 You can install the modules from above with easy_install (http://pypi.python.org/pypi/setuptools)
 
