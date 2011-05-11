@@ -62,7 +62,7 @@ where COMMAND and [OPTIONS] may be one of:
         elif self._command_name == "terminate-cluster":
             self.terminate_cluster(argv, options_dict)
 
-        elif self._command_name == "launch-cluster":
+        elif self._command_name == "launch-cluster":        
             self.launch_cluster(argv, options_dict)
 
         elif self._command_name == "terminate-dead-nodes":
@@ -248,6 +248,7 @@ where COMMAND and [OPTIONS] may be one of:
             instance_template.add_env_strings([
                 "NN_HOST=%s" % namenode.public_dns_name,
                 "JT_HOST=%s" % jobtracker.public_dns_name,
+                "ZOOKEEPER_QUORUM=%s" % namenode.private_dns_name,
             ])
 
         # I think this count can be wrong if run too soon after running
