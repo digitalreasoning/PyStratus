@@ -106,7 +106,7 @@ where COMMAND and [OPTIONS] may be one of:
         opt.update(options_dict)
 
         number_of_slaves = int(args[0])
-        instance_templates = [
+        master_templates = [
             InstanceTemplate(
                 (
                     self.service.NAMENODE, 
@@ -123,7 +123,25 @@ where COMMAND and [OPTIONS] may be one of:
                 opt.get('user_packages'),
                 opt.get('auto_shutdown'), 
                 opt.get('env'),
-                opt.get('security_groups')),
+                opt.get('security_groups'))
+        ]
+        for it in master_templates:
+            it.add_env_strings([
+                "CLUSTER_SIZE=%d" % (number_of_slaves+1)
+            ])
+
+        print "Launching cluster with %d instance(s) - starting master...please wait." % (number_of_slaves+1)
+        master = self.service.launch_cluster(master_templates, 
+                                                 opt.get('client_cidr'),
+                                                 opt.get('config_dir'))
+
+        if master is None:
+            print "An error occurred started the Hadoop service. Check the logs for more information."
+            sys.exit(1)
+
+        print "Master now running at %s - starting slaves" % master.public_dns_name
+
+        slave_templates = [
             InstanceTemplate(
                 (
                     self.service.DATANODE, 
@@ -142,21 +160,21 @@ where COMMAND and [OPTIONS] may be one of:
                 opt.get('security_groups'))
         ]
 
-        for it in instance_templates:
+        for it in slave_templates:
             it.add_env_strings([
-                "CLUSTER_SIZE=%d" % (number_of_slaves+1)
+                "CLUSTER_SIZE=%d" % (number_of_slaves+1),
+                "NN_HOST=%s" % master.public_dns_name,
+                "JT_HOST=%s" % master.public_dns_name,
+                "ZOOKEEPER_QUORUM=%s" % master.private_dns_name
             ])
 
-        print "Launching cluster with %d instance(s)...please wait." % (number_of_slaves+1)
-        jobtracker = self.service.launch_cluster(instance_templates, 
+        print "Launching %d slave instance(s)...please wait." % (number_of_slaves)
+        slave = self.service.launch_cluster(slave_templates, 
                                                  opt.get('client_cidr'),
                                                  opt.get('config_dir'))
-
-        if jobtracker is None:
-            print "An error occurred started the Hadoop service. Check the logs for more information."
-            sys.exit(1)
-
-        print "Browse the cluster at http://%s/" % jobtracker.public_dns_name
+        
+        print "Finished - browse the cluster at http://%s/" % master.public_dns_name
+ 
         self.logger.debug("Startup complete.")
 
     def launch_master(self, argv, options_dict):
