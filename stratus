@@ -104,6 +104,26 @@ SNAPSHOT_OPTIONS = BASIC_OPTIONS[:] + [
 # load the service plugin based on the service type
 plugin_manager = None
 
+def load_config(options_dict):
+    config_dir = get_config_dir(options_dict)
+    primary_config_file = os.path.join(config_dir, CONFIG_FILENAME)
+    config_files = [primary_config_file]
+    config_ddir = primary_config_file + ".d"
+    for dirpath,dirnames,files in os.walk(config_ddir, followlinks=True):
+      for file in files:
+        if file.endswith(".cfg"):
+          config_files.append(os.path.join(dirpath,file))
+
+    if 'config_dir' not in options_dict:
+        # if config_dir not set, then also search in current directory
+        config_files.insert(0, CONFIG_FILENAME)
+    config = ConfigParser.ConfigParser()
+    read_files = config.read(config_files)
+    logging.debug("Read %d configuration files: %s", len(read_files),
+                  ", ".join(read_files))
+    return config, config_dir
+
+
 def parse_options_and_config(command, option_list=[], extra_arguments=(),
                              unbounded_args=False, description=None):
   """
@@ -120,16 +140,7 @@ def parse_options_and_config(command, option_list=[], extra_arguments=(),
   (options_dict, args) = parse_options(command, option_list, expected_arguments,
                                        unbounded_args, description=description)
 
-  config_dir = get_config_dir(options_dict)
-  config_files = [os.path.join(config_dir, CONFIG_FILENAME)]
-  if 'config_dir' not in options_dict:
-    # if config_dir not set, then also search in current directory
-    config_files.insert(0, CONFIG_FILENAME)
-
-  config = ConfigParser.ConfigParser()
-  read_files = config.read(config_files)
-  logging.debug("Read %d configuration files: %s", len(read_files),
-                ", ".join(read_files))
+  config, config_dir = load_config(options_dict)
   cluster_name = args[0]
   if not config.has_section(cluster_name):
       logging.warn("No cluster named '%s' found configured.  See documentation on github for more information." % cluster_name)
@@ -239,15 +250,8 @@ def get_config_dir(options_dict):
         config_dir = DEFAULT_CONFIG_DIR
     return config_dir
 
-def get_defined_clusters(options_dict, config_dir):
-    config_files = [os.path.join(config_dir, CONFIG_FILENAME)]
-    if 'config_dir' not in options_dict:
-        # if config_dir not set, then also search in current directory
-        config_files.insert(0, CONFIG_FILENAME)
-
-    config = ConfigParser.ConfigParser()
-    read_files = config.read(config_files)
-
+def get_defined_clusters(options_dict):
+    config, config_dir = load_config(options_dict)
     clusters = {}
     for cluster_name in config.sections():
         clusters[cluster_name] = merge_config_with_options(cluster_name, config, options_dict)
@@ -257,7 +261,7 @@ def get_defined_clusters(options_dict, config_dir):
 def list_clusters(options_dict, list_all=False):
 
     config_dir = get_config_dir(options_dict)
-    defined_clusters = get_defined_clusters(options_dict, config_dir)
+    defined_clusters = get_defined_clusters(options_dict)
     region = options_dict.get('region', DEFAULT_REGION)
     if region is None:
         region = DEFAULT_REGION
