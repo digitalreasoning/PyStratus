@@ -18,6 +18,7 @@
 import ConfigParser
 import logging
 import os
+import types
 import sys
 import logging
 import logging.config
@@ -118,11 +119,22 @@ def load_config(options_dict):
         # if config_dir not set, then also search in current directory
         config_files.insert(0, CONFIG_FILENAME)
     config = ConfigParser.ConfigParser(defaults={'config_dir':config_dir, 'config_ddir':config_ddir})
+    config._read = types.MethodType(_config_parser_read, config, ConfigParser.ConfigParser)
     read_files = config.read(config_files)
     logging.debug("Read %d configuration files: %s", len(read_files),
                   ", ".join(read_files))
     return config, config_dir
 
+def _config_parser_read(self, fp, fpname):
+
+    k = self._sections.keys()
+    logging.debug("Parsing config file: %s with %s" % (fpname, self))
+    rv = ConfigParser.ConfigParser._read(self, fp, fpname)
+    dirname = os.path.dirname(fpname)
+    for section in  (set(self._sections.keys()) - set(k)):
+        self._sections[section]['this_dir'] = dirname
+        logging.debug("this_dir for section %s is set to %s." % (section, dirname))
+    return rv
 
 def parse_options_and_config(command, option_list=[], extra_arguments=(),
                              unbounded_args=False, description=None):
