@@ -117,7 +117,7 @@ def load_config(options_dict):
     if 'config_dir' not in options_dict:
         # if config_dir not set, then also search in current directory
         config_files.insert(0, CONFIG_FILENAME)
-    config = ConfigParser.ConfigParser()
+    config = ConfigParser.ConfigParser(defaults={'config_dir':config_dir, 'config_ddir':config_ddir})
     read_files = config.read(config_files)
     logging.debug("Read %d configuration files: %s", len(read_files),
                   ", ".join(read_files))
