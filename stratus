@@ -166,7 +166,7 @@ def parse_options_and_config(command, option_list=[], extra_arguments=(),
                               opt.get('cloud_provider'),
                               opt.get('service_type'),
                               opt.get('region', DEFAULT_REGION),
-                              config_dir)
+                              opt.get('this_dir'))
   return (opt, args, cli)
 
 def load_plugins(cluster_name, cloud_provider, service_type, region, config_dir):
@@ -319,7 +319,7 @@ def list_clusters(options_dict, list_all=False):
                                     cloud_provider, 
                                     service_type, 
                                     region, 
-                                    config_dir)
+                                    params['this_dir'])
 
         if cli is None or service is None:
             continue
@@ -364,7 +364,7 @@ def list_clusters(options_dict, list_all=False):
 
                 # lookup the CLI plugin for this cluster, provider, and service
                 # and use it to prin the running instances
-                cli, service = load_plugins(r[1], r[3], r[2], region, config_dir)
+                cli, service = load_plugins(r[1], r[3], r[2], region, defined_clusters[r[1]]['this_dir'])
                 cli.print_instances()
 
         except ValueError:
