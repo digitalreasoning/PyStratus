@@ -158,6 +158,9 @@ def parse_options_and_config(command, option_list=[], extra_arguments=(),
       logging.warn("No cluster named '%s' found configured.  See documentation on github for more information." % cluster_name)
   opt = merge_config_with_options(cluster_name, config, options_dict)
 
+  # expand private key path...this is often stored relative to the user's home directory
+  if 'private_key' in opt:
+      opt['private_key'] = os.path.expanduser(opt['private_key'])
   # add in the config_dir
   if not opt.has_key('config_dir'):
     opt['config_dir'] = config_dir
