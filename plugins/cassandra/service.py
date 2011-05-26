@@ -9,6 +9,7 @@ from cloud.cluster import TimeoutException
 from cloud.service import InstanceTemplate
 from cloud.plugin import ServicePlugin 
 from cloud.util import xstr
+from cloud.util import check_output
 
 from yaml import load as parse_yaml
 from yaml import dump as dump_yaml
@@ -456,7 +457,7 @@ class CassandraService(ServicePlugin):
             # so doing some extra validation to ensure that all nodes of 
             # the ring are "Up" and "Normal" and manually set a bad return 
             # code otherwise
-            ring_output = subprocess.check_output(ssh_command, shell=True, stderr=subprocess.STDOUT)
+            ring_output = check_output(ssh_command, shell=True, stderr=subprocess.STDOUT)
             for node in ring_output.splitlines()[3:]:
                 nodesplit = node.split()
                 self.logger.debug("Node %s is %s and %s" % (nodesplit[0], nodesplit[1], nodesplit[2]))
