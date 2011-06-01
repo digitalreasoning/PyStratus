@@ -19,6 +19,7 @@ Utility functions.
 
 import ConfigParser
 import socket
+from subprocess import Popen, PIPE, CalledProcessError
 import urllib2
 
 from boto.ec2 import regions as EC2Regions
@@ -126,7 +127,7 @@ def check_output(*popenargs, **kwargs):
       cmd = kwargs.get("args")
       if cmd is None:
           cmd = popenargs[0]
-      raise CalledProcessError(retcode, cmd, output=output)
+      raise CalledProcessError(retcode, cmd)
   return output
 
 
