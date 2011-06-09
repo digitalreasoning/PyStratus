@@ -11,6 +11,7 @@ import socket
 import re
 
 from fabric.api import *
+from fabric.state import output
 
 from cloud.cluster import TimeoutException
 from cloud.service import InstanceTemplate
