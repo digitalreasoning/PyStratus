@@ -1,0 +1,9 @@
+boto==2.0
+python-dateutil==1.5
+simplejson
+prettytable
+yapsy
+fabric
+PyYAML
+elementTree
+cElementTree
