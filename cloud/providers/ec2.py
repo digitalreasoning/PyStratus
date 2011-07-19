@@ -75,8 +75,8 @@ class Ec2Cluster(Cluster):
     for res in all_instances:
       instance = res.instances[0]
       for group in res.groups:
-        if group.id.endswith("-" + role) and instance.state == state:
-          clusters.append(re.sub("-%s$" % re.escape(role), "", group.id))
+        if group.name.endswith("-" + role) and instance.state == state:
+          clusters.append(re.sub("-%s$" % re.escape(role), "", group.name))
     return clusters
 
   def __init__(self, name, config_dir, region):
@@ -189,7 +189,7 @@ class Ec2Cluster(Cluster):
     instances = []
     for res in all_instances:
       for group in res.groups:
-        if group.id == group_name:
+        if group.name == group_name:
           for instance in res.instances:
             if state_filter == None or instance.state == state_filter:
               instances.append(instance)
