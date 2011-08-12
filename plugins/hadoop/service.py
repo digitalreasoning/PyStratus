@@ -213,11 +213,11 @@ class HadoopService(ServicePlugin):
         if not private_key:
             return None
 
-        env.host_string = self.get_namenode().public_dns_name
-        env.user = "root"
-        env.key_filename = private_key
-        fab_output = run("echo $HADOOP_HOME")
-        return fab_output.rstrip() if fab_output else None
+        with settings(host_string=self.get_namenode().public_dns_name):
+            env.user = "root"
+            env.key_filename = private_key
+            fab_output = run("echo $HADOOP_HOME")
+            return fab_output.rstrip() if fab_output else None
 
     def get_namenode(self):
         instances = self.cluster.get_instances_in_role(self.NAMENODE, "running")
@@ -400,4 +400,83 @@ class HadoopService(ServicePlugin):
             shell=True)
         
         return process.pid
-    
+
+    def _daemon_control(self, instance, daemon, action, ssh_options, as_user="hadoop"):
+        command = "su -s /bin/bash - %s -c \"hadoop-daemon.sh %s %s\"" % (as_user, action, daemon)
+        ssh_command = self._get_standard_ssh_command(instance, ssh_options, command)
+        subprocess.call(ssh_command, shell=True)
+
+    def stop_hadoop(self, ssh_options, as_user):
+        namenode = self.get_namenode()
+        if namenode is None:
+            self.logger.error("No namenode running. Aborting.")
+            return None
+
+        datanodes = self.get_datanodes()
+        if datanodes is None:
+            self.logger.error("No datanodes running. Aborting.")
+            return None
+
+        # kill processes on data node
+        for datanode in datanodes:
+            self._daemon_control(datanode, "tasktracker", "stop", ssh_options, as_user=as_user)
+            self._daemon_control(datanode, "datanode", "stop", ssh_options, as_user=as_user)
+
+        # kill namenode processes
+        self._daemon_control(namenode, "jobtracker", "stop", ssh_options, as_user=as_user)
+        self._daemon_control(namenode, "secondarynamenode", "stop", ssh_options, as_user=as_user)
+        self._daemon_control(namenode, "namenode", "stop", ssh_options, as_user=as_user)
+
+    def start_hadoop(self, ssh_options):
+        namenode = self.get_namenode()
+        if namenode is None:
+            self.logger.error("No namenode running. Aborting.")
+            return None
+
+        datanodes = self.get_datanodes()
+        if datanodes is None:
+            self.logger.error("No datanodes running. Aborting.")
+            return None
+
+        # start namenode processes
+        self._daemon_control(namenode, "jobtracker", "start", ssh_options, as_user=as_user)
+        self._daemon_control(namenode, "secondarynamenode", "start", ssh_options, as_user=as_user)
+        self._daemon_control(namenode, "namenode", "start", ssh_options, as_user=as_user)
+
+        # start processes on data node
+        for datanode in datanodes:
+            self._daemon_control(datanode, "tasktracker", "start", ssh_options, as_user=as_user)
+            self._daemon_control(datanode, "datanode", "start", ssh_options, as_user=as_user)
+
+
+    def get_config_files(self, file_paths, options):
+        env.user = "root"
+        env.key_filename = options["private_key"]
+        hadoop_home = self.get_hadoop_home(env.key_filename)
+        conf_path = os.path.join(hadoop_home, "conf")
+
+        print "Downloading %d file(s) from namenode..." % len(file_paths)
+        with settings(host_string=self.get_namenode().public_dns_name):
+            for file_path in file_paths:
+                get(os.path.join(conf_path, file_path))
+        print "Done."
+
+    def send_config_files(self, file_paths, options):
+        hosts = [i.public_dns_name for i in self.get_instances()]
+        if len(hosts) == 0:
+            print "No instances running. Aborting"
+            return None
+
+        env.user = "root"
+        env.key_filename = options["private_key"]
+        hadoop_home = self.get_hadoop_home(env.key_filename)
+        conf_path = os.path.join(hadoop_home, "conf")
+
+        print "Uploading %d file(s) to %d node(s)..." % (len(file_paths), len(hosts))
+
+        for h in hosts:
+            with settings(host_string=h):
+                for file_path in file_paths:
+                    put(file_path, conf_path)
+
+        print "Done. Upload location: %s" % conf_path

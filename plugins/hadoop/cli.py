@@ -17,6 +17,13 @@ where COMMAND and [OPTIONS] may be one of:
   launch-master                       launch or find a master in CLUSTER
   launch-slaves NUM_SLAVES            launch NUM_SLAVES slaves in CLUSTER
   terminate-dead-nodes                find and terminate dead nodes in CLUSTER
+  start-hadoop                        starts all processes on namenode and datanodes
+  stop-hadoop                         stops all processes on namenode and datanodes
+  send-config-files                   sends the given config files to each node and
+                                        overwrites the existing file in the hadoop
+                                        conf directory (BE CAREFUL!)
+  get-config-files                    gets the given config files from the namenode
+                                        and stores them in the cwd 
 
                                CLUSTER COMMANDS
   ----------------------------------------------------------------------------------
@@ -73,6 +80,18 @@ where COMMAND and [OPTIONS] may be one of:
 
         elif self._command_name == "launch-slaves":
             self.launch_slaves(argv, options_dict)
+
+        elif self._command_name == "start-hadoop":
+            self.start_hadoop(argv, options_dict)
+
+        elif self._command_name == "stop-hadoop":
+            self.stop_hadoop(argv, options_dict)
+
+        elif self._command_name == "send-config-files":
+            self.send_config_files(argv, options_dict)
+
+        elif self._command_name == "get-config-files":
+            self.get_config_files(argv, options_dict)
 
         elif self._command_name == "login":
             self.login(argv, options_dict)
@@ -276,6 +295,48 @@ where COMMAND and [OPTIONS] may be one of:
         self.service.launch_cluster(instance_templates, 
             opt.get('client_cidr'), opt.get('config_dir'),
             num_existing_tasktrackers=num_tasktrackers)
+
+    def start_hadoop(self, argv, options_dict):
+        """Start the various processes on the namenode and slave nodes"""
+
+        opt, args = self.parse_options(self._command_name, argv, BASIC_OPTIONS)
+        opt.update(options_dict)
+
+        print "Starting hadoop..."
+        self.service.start_hadoop(options_dict.get("ssh_options"),
+                                  options_dict.get("hadoop_user", "hadoop"))
+
+    def stop_hadoop(self, argv, options_dict):
+        """Stop the various processes on the namenode and slave nodes"""
+
+        opt, args = self.parse_options(self._command_name, argv, BASIC_OPTIONS)
+        opt.update(options_dict)
+
+        print "Stopping hadoop..."
+        self.service.stop_hadoop(options_dict.get("ssh_options"),
+                                 options_dict.get("hadoop_user", "hadoop"))
+
+    def get_config_files(self, argv, options_dict):
+        """
+        Gets the given config files from the name node and writes them
+        to the local directory.
+        """
+
+        opt, args = self.parse_options(self._command_name, argv, expected_arguments=["FILE*"], unbounded_args=True)
+        opt.update(options_dict)
+
+        self.service.get_config_files(args, options_dict)
+
+    def send_config_files(self, argv, options_dict):
+        """
+        Sends the given config file to each node in the cluster, overwriting
+        the file located in hadoop/conf directory.
+        """
+
+        opt, args = self.parse_options(self._command_name, argv, expected_arguments=["FILE*"], unbounded_args=True)
+        opt.update(options_dict)
+
+        self.service.send_config_files(args, options_dict)
 
     def terminate_dead_nodes(self, argv, options_dict):
         """Find and terminate dead nodes in CLUSTER."""
