@@ -406,7 +406,7 @@ class HadoopService(ServicePlugin):
         ssh_command = self._get_standard_ssh_command(instance, ssh_options, command)
         subprocess.call(ssh_command, shell=True)
 
-    def stop_hadoop(self, ssh_options, as_user):
+    def stop_hadoop(self, ssh_options, as_user="hadoop"):
         namenode = self.get_namenode()
         if namenode is None:
             self.logger.error("No namenode running. Aborting.")
@@ -418,16 +418,20 @@ class HadoopService(ServicePlugin):
             return None
 
         # kill processes on data node
+        i = 1
         for datanode in datanodes:
+            print "Stopping datanode #%d processes..." % i
             self._daemon_control(datanode, "tasktracker", "stop", ssh_options, as_user=as_user)
             self._daemon_control(datanode, "datanode", "stop", ssh_options, as_user=as_user)
+            i += 1
 
         # kill namenode processes
+        print "Stopping namenode processes..."
         self._daemon_control(namenode, "jobtracker", "stop", ssh_options, as_user=as_user)
         self._daemon_control(namenode, "secondarynamenode", "stop", ssh_options, as_user=as_user)
         self._daemon_control(namenode, "namenode", "stop", ssh_options, as_user=as_user)
 
-    def start_hadoop(self, ssh_options):
+    def start_hadoop(self, ssh_options, as_user="hadoop"):
         namenode = self.get_namenode()
         if namenode is None:
             self.logger.error("No namenode running. Aborting.")
@@ -439,14 +443,18 @@ class HadoopService(ServicePlugin):
             return None
 
         # start namenode processes
+        print "Starting namenode processes..."
         self._daemon_control(namenode, "jobtracker", "start", ssh_options, as_user=as_user)
         self._daemon_control(namenode, "secondarynamenode", "start", ssh_options, as_user=as_user)
         self._daemon_control(namenode, "namenode", "start", ssh_options, as_user=as_user)
 
         # start processes on data node
+        i = 1
         for datanode in datanodes:
+            print "Starting datanode #%d processes..." % i
             self._daemon_control(datanode, "tasktracker", "start", ssh_options, as_user=as_user)
             self._daemon_control(datanode, "datanode", "start", ssh_options, as_user=as_user)
+            i += 1
 
 
     def get_config_files(self, file_paths, options):
