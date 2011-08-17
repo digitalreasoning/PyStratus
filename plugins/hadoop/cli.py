@@ -309,6 +309,22 @@ where COMMAND and [OPTIONS] may be one of:
     def stop_hadoop(self, argv, options_dict):
         """Stop the various processes on the namenode and slave nodes"""
 
+        x = "n"
+        while True:
+            try:
+                x = raw_input("Are you sure you want to stop Hadoop? (Y/n) ").lower()
+                if x in ["y", "n"]:
+                    break
+                print "Value must be either y or n. Try again."
+            except KeyboardInterrupt:
+                x = "n"
+                print ""
+                break
+        
+        if x == "n":
+            print "Quitting"
+            sys.exit(1)
+
         opt, args = self.parse_options(self._command_name, argv, BASIC_OPTIONS)
         opt.update(options_dict)
 
