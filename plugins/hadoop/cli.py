@@ -25,6 +25,16 @@ where COMMAND and [OPTIONS] may be one of:
   get-config-files                    gets the given config files from the namenode
                                         and stores them in the cwd 
 
+                               HBASE COMMANDS
+  ----------------------------------------------------------------------------------
+  start-hbase                         starts processes on namenode and datanodes
+  stop-hbase                          stops processes on namenode and datanodes
+  send-hbase-config-files             sends the given config files to each node and
+                                        overwrites the existing file in the hadoop
+                                        conf directory (BE CAREFUL!)
+  get-hbase-config-files              gets the given config files from the namenode
+                                        and stores them in the cwd 
+
                                CLUSTER COMMANDS
   ----------------------------------------------------------------------------------
   details                             list instances in CLUSTER
@@ -87,11 +97,23 @@ where COMMAND and [OPTIONS] may be one of:
         elif self._command_name == "stop-hadoop":
             self.stop_hadoop(argv, options_dict)
 
+        elif self._command_name == "start-hbase":
+            self.start_hbase(argv, options_dict)
+
+        elif self._command_name == "stop-hbase":
+            self.stop_hbase(argv, options_dict)
+
         elif self._command_name == "send-config-files":
             self.send_config_files(argv, options_dict)
 
         elif self._command_name == "get-config-files":
             self.get_config_files(argv, options_dict)
+
+        elif self._command_name == "send-hbase-config-files":
+            self.send_hbase_config_files(argv, options_dict)
+
+        elif self._command_name == "get-hbase-config-files":
+            self.get_hbase_config_files(argv, options_dict)
 
         elif self._command_name == "login":
             self.login(argv, options_dict)
@@ -332,6 +354,42 @@ where COMMAND and [OPTIONS] may be one of:
         self.service.stop_hadoop(options_dict.get("ssh_options"),
                                  options_dict.get("hadoop_user", "hadoop"))
 
+    def start_hbase(self, argv, options_dict):
+        """Start the various hbase processes on the namenode and slave nodes"""
+
+        opt, args = self.parse_options(self._command_name, argv, BASIC_OPTIONS)
+        opt.update(options_dict)
+
+        print "Starting hbase..."
+        self.service.start_hbase(options_dict.get("ssh_options"),
+                                  options_dict.get("hadoop_user", "hadoop"))
+
+    def stop_hbase(self, argv, options_dict):
+        """Stop the various hbase processes on the namenode and slave nodes"""
+
+        x = "n"
+        while True:
+            try:
+                x = raw_input("Are you sure you want to stop HBase? (Y/n) ").lower()
+                if x in ["y", "n"]:
+                    break
+                print "Value must be either y or n. Try again."
+            except KeyboardInterrupt:
+                x = "n"
+                print ""
+                break
+        
+        if x == "n":
+            print "Quitting"
+            sys.exit(1)
+
+        opt, args = self.parse_options(self._command_name, argv, BASIC_OPTIONS)
+        opt.update(options_dict)
+
+        print "Stopping hbase..."
+        self.service.stop_hbase(options_dict.get("ssh_options"),
+                                 options_dict.get("hadoop_user", "hadoop"))
+
     def get_config_files(self, argv, options_dict):
         """
         Gets the given config files from the name node and writes them
@@ -353,6 +411,28 @@ where COMMAND and [OPTIONS] may be one of:
         opt.update(options_dict)
 
         self.service.send_config_files(args, options_dict)
+
+    def get_hbase_config_files(self, argv, options_dict):
+        """
+        Gets the given config files from the hbase master node and 
+        writes them to the local directory.
+        """
+
+        opt, args = self.parse_options(self._command_name, argv, expected_arguments=["FILE*"], unbounded_args=True)
+        opt.update(options_dict)
+
+        self.service.get_hbase_config_files(args, options_dict)
+
+    def send_hbase_config_files(self, argv, options_dict):
+        """
+        Sends the given config file to each node in the cluster, overwriting
+        the file located in hadoop/conf directory.
+        """
+
+        opt, args = self.parse_options(self._command_name, argv, expected_arguments=["FILE*"], unbounded_args=True)
+        opt.update(options_dict)
+
+        self.service.send_hbase_config_files(args, options_dict)
 
     def terminate_dead_nodes(self, argv, options_dict):
         """Find and terminate dead nodes in CLUSTER."""

@@ -219,6 +219,19 @@ class HadoopService(ServicePlugin):
             fab_output = run("echo $HADOOP_HOME")
             return fab_output.rstrip() if fab_output else None
 
+    def get_hbase_home(self, private_key):
+        """Find out what HBASE_HOME is on the namenode.  You must provide the
+        private_key necessary to connect to the namenode."""
+        
+        if not private_key:
+            return None
+
+        with settings(host_string=self.get_namenode().public_dns_name):
+            env.user = "root"
+            env.key_filename = private_key
+            fab_output = run("echo $HBASE_HOME")
+            return fab_output.rstrip() if fab_output else None
+
     def get_namenode(self):
         instances = self.cluster.get_instances_in_role(self.NAMENODE, "running")
         if not instances:
@@ -401,8 +414,8 @@ class HadoopService(ServicePlugin):
         
         return process.pid
 
-    def _daemon_control(self, instance, daemon, action, ssh_options, as_user="hadoop"):
-        command = "su -s /bin/bash - %s -c \"hadoop-daemon.sh %s %s\"" % (as_user, action, daemon)
+    def _daemon_control(self, instance, service, daemon, action, ssh_options, as_user="hadoop"):
+        command = "su -s /bin/bash - %s -c \"%s-daemon.sh %s %s\"" % (as_user, service, action, daemon)
         ssh_command = self._get_standard_ssh_command(instance, ssh_options, command)
         subprocess.call(ssh_command, shell=True)
 
@@ -421,15 +434,15 @@ class HadoopService(ServicePlugin):
         i = 1
         for datanode in datanodes:
             print "Stopping datanode #%d processes..." % i
-            self._daemon_control(datanode, "tasktracker", "stop", ssh_options, as_user=as_user)
-            self._daemon_control(datanode, "datanode", "stop", ssh_options, as_user=as_user)
+            self._daemon_control(datanode, "hadoop", "tasktracker", "stop", ssh_options, as_user=as_user)
+            self._daemon_control(datanode, "hadoop", "datanode", "stop", ssh_options, as_user=as_user)
             i += 1
 
         # kill namenode processes
         print "Stopping namenode processes..."
-        self._daemon_control(namenode, "jobtracker", "stop", ssh_options, as_user=as_user)
-        self._daemon_control(namenode, "secondarynamenode", "stop", ssh_options, as_user=as_user)
-        self._daemon_control(namenode, "namenode", "stop", ssh_options, as_user=as_user)
+        self._daemon_control(namenode, "hadoop", "jobtracker", "stop", ssh_options, as_user=as_user)
+        self._daemon_control(namenode, "hadoop", "secondarynamenode", "stop", ssh_options, as_user=as_user)
+        self._daemon_control(namenode, "hadoop", "namenode", "stop", ssh_options, as_user=as_user)
 
     def start_hadoop(self, ssh_options, as_user="hadoop"):
         namenode = self.get_namenode()
@@ -444,18 +457,63 @@ class HadoopService(ServicePlugin):
 
         # start namenode processes
         print "Starting namenode processes..."
-        self._daemon_control(namenode, "jobtracker", "start", ssh_options, as_user=as_user)
-        self._daemon_control(namenode, "secondarynamenode", "start", ssh_options, as_user=as_user)
-        self._daemon_control(namenode, "namenode", "start", ssh_options, as_user=as_user)
+        self._daemon_control(namenode, "hadoop", "jobtracker", "start", ssh_options, as_user=as_user)
+        self._daemon_control(namenode, "hadoop", "secondarynamenode", "start", ssh_options, as_user=as_user)
+        self._daemon_control(namenode, "hadoop", "namenode", "start", ssh_options, as_user=as_user)
 
         # start processes on data node
         i = 1
         for datanode in datanodes:
             print "Starting datanode #%d processes..." % i
-            self._daemon_control(datanode, "tasktracker", "start", ssh_options, as_user=as_user)
-            self._daemon_control(datanode, "datanode", "start", ssh_options, as_user=as_user)
+            self._daemon_control(datanode, "hadoop", "tasktracker", "start", ssh_options, as_user=as_user)
+            self._daemon_control(datanode, "hadoop", "datanode", "start", ssh_options, as_user=as_user)
             i += 1
 
+    def stop_hbase(self, ssh_options, as_user="hadoop"):
+        namenode = self.get_namenode()
+        if namenode is None:
+            self.logger.error("No namenode running. Aborting.")
+            return None
+
+        datanodes = self.get_datanodes()
+        if datanodes is None:
+            self.logger.error("No datanodes running. Aborting.")
+            return None
+
+        # kill processes on data node
+        i = 1
+        for datanode in datanodes:
+            print "Stopping datanode #%d processes..." % i
+            self._daemon_control(datanode, "hbase", "regionserver", "stop", ssh_options, as_user=as_user)
+            i += 1
+
+        # kill namenode processes
+        print "Stopping namenode processes..."
+        self._daemon_control(namenode, "hbase", "zookeeper", "stop", ssh_options, as_user=as_user)
+        self._daemon_control(namenode, "hbase", "master", "stop", ssh_options, as_user=as_user)
+
+    def start_hbase(self, ssh_options, as_user="hadoop"):
+        namenode = self.get_namenode()
+        if namenode is None:
+            self.logger.error("No namenode running. Aborting.")
+            return None
+
+        datanodes = self.get_datanodes()
+        if datanodes is None:
+            self.logger.error("No datanodes running. Aborting.")
+            return None
+
+        # start namenode processes
+        print "Starting namenode processes..."
+        self._daemon_control(namenode, "hbase", "zookeeper", "start", ssh_options, as_user=as_user)
+        self._daemon_control(namenode, "hbase", "master", "start", ssh_options, as_user=as_user)
+
+        # start processes on data node
+        i = 1
+        for datanode in datanodes:
+            print "Starting datanode #%d processes..." % i
+            self._daemon_control(datanode, "hbase", "regionserver", "start", ssh_options, as_user=as_user)
+            i += 1
 
     def get_config_files(self, file_paths, options):
         env.user = "root"
@@ -479,6 +537,38 @@ class HadoopService(ServicePlugin):
         env.key_filename = options["private_key"]
         hadoop_home = self.get_hadoop_home(env.key_filename)
         conf_path = os.path.join(hadoop_home, "conf")
+
+        print "Uploading %d file(s) to %d node(s)..." % (len(file_paths), len(hosts))
+
+        for h in hosts:
+            with settings(host_string=h):
+                for file_path in file_paths:
+                    put(file_path, conf_path)
+
+        print "Done. Upload location: %s" % conf_path
+
+    def get_hbase_config_files(self, file_paths, options):
+        env.user = "root"
+        env.key_filename = options["private_key"]
+        hbase_home = self.get_hbase_home(env.key_filename)
+        conf_path = os.path.join(hbase_home, "conf")
+
+        print "Downloading %d file(s) from master..." % len(file_paths)
+        with settings(host_string=self.get_namenode().public_dns_name):
+            for file_path in file_paths:
+                get(os.path.join(conf_path, file_path))
+        print "Done."
+
+    def send_hbase_config_files(self, file_paths, options):
+        hosts = [i.public_dns_name for i in self.get_instances()]
+        if len(hosts) == 0:
+            print "No instances running. Aborting"
+            return None
+
+        env.user = "root"
+        env.key_filename = options["private_key"]
+        hbase_home = self.get_hbase_home(env.key_filename)
+        conf_path = os.path.join(hbase_home, "conf")
 
         print "Uploading %d file(s) to %d node(s)..." % (len(file_paths), len(hosts))
 
