@@ -111,6 +111,9 @@ where COMMAND and [OPTIONS] may be one of:
         elif self._command_name == "list-storage":
             self.print_storage()
 
+        elif self._command_name == "start-cloudbase":
+            self.start_cloudbase(argv, options_dict)
+            
         else:
             self.print_help()
 
@@ -123,6 +126,12 @@ where COMMAND and [OPTIONS] may be one of:
                                        argv,
                                        expected_arguments=expected_arguments)
         opt.update(options_dict)
+
+        provider = opt.get("provider")
+        if provider is None:
+            provider = "hbase"
+        else:
+            provider.lower()
 
         number_of_slaves = int(args[0])
         master_templates = [
@@ -146,16 +155,18 @@ where COMMAND and [OPTIONS] may be one of:
         ]
         for it in master_templates:
             it.add_env_strings([
-                "CLUSTER_SIZE=%d" % (number_of_slaves+1)
+                "CLUSTER_SIZE=%d" % (number_of_slaves+1),
+                "PROVIDER=%s" % (provider)
             ])
 
+        print "Using %s as the backend datastore" % (provider)
+
         print "Launching cluster with %d instance(s) - starting master...please wait." % (number_of_slaves+1)
-        master = self.service.launch_cluster(master_templates, 
-                                                 opt.get('client_cidr'),
-                                                 opt.get('config_dir'))
+        
+        master = self.service.launch_cluster(master_templates, opt.get('client_cidr'), opt.get('config_dir'))
 
         if master is None:
-            print "An error occurred started the Hadoop service. Check the logs for more information."
+            print "An error occurred starting the master node. Check the logs for more information."
             sys.exit(1)
 
         print "Master now running at %s - starting slaves" % master.public_dns_name
@@ -184,14 +195,24 @@ where COMMAND and [OPTIONS] may be one of:
                 "CLUSTER_SIZE=%d" % (number_of_slaves+1),
                 "NN_HOST=%s" % master.public_dns_name,
                 "JT_HOST=%s" % master.public_dns_name,
-                "ZOOKEEPER_QUORUM=%s" % master.private_dns_name
+                "ZOOKEEPER_QUORUM=%s" % master.private_dns_name,
+                "PROVIDER=%s" % (provider)
             ])
 
         print "Launching %d slave instance(s)...please wait." % (number_of_slaves)
-        slave = self.service.launch_cluster(slave_templates, 
-                                                 opt.get('client_cidr'),
-                                                 opt.get('config_dir'))
+        slave = self.service.launch_cluster(slave_templates, opt.get('client_cidr'), opt.get('config_dir'))        
         
+        if slave is None:
+            print "An error occurred starting the slave nodes.  Check the logs for more details"
+            sys.exit(1)
+            
+        #Once the cluster is up, if the provider is Cloudbase, we need to ensure that Cloudbase has been initialized
+        #and launch the servers
+        if provider == "cloudbase":
+            #log in to the master and run a startup script
+            print "Provider is cloudbase - starting cloudbase processes ... please wait"
+            self.service.start_cloudbase(options_dict.get("ssh_options"), options_dict.get("hadoop_user", "hadoop"))
+            
         print "Finished - browse the cluster at http://%s/" % master.public_dns_name
  
         self.logger.debug("Startup complete.")
@@ -202,6 +223,12 @@ where COMMAND and [OPTIONS] may be one of:
         opt, args = self.parse_options(self._command_name, argv, BASIC_OPTIONS)
         opt.update(options_dict)
         
+        provider = opt.get("provider")
+        if provider is None:
+            provider = "hbase"
+        else:
+            provider.lower()
+
         instance_templates = [
             InstanceTemplate(
                 (
@@ -221,6 +248,11 @@ where COMMAND and [OPTIONS] may be one of:
                 opt.get('env'),
                 opt.get('security_groups')),
             ]
+
+        for it in master_templates:
+            it.add_env_strings([
+                "PROVIDER=%s" % (provider)
+            ])
 
         print "Launching cluster master...please wait." 
         jobtracker = self.service.launch_cluster(instance_templates, 
@@ -242,6 +274,12 @@ where COMMAND and [OPTIONS] may be one of:
                                        argv,
                                        expected_arguments=expected_arguments)
         opt.update(options_dict)
+
+        provider = opt.get("provider")
+        if provider is None:
+            provider = "hbase"
+        else:
+            provider.lower()
 
         try:
             number_of_slaves = int(args[0])
@@ -286,6 +324,7 @@ where COMMAND and [OPTIONS] may be one of:
                 "NN_HOST=%s" % namenode.public_dns_name,
                 "JT_HOST=%s" % jobtracker.public_dns_name,
                 "ZOOKEEPER_QUORUM=%s" % namenode.private_dns_name,
+                "PROVIDER=%s" % (provider)
             ])
 
         # I think this count can be wrong if run too soon after running
@@ -296,6 +335,14 @@ where COMMAND and [OPTIONS] may be one of:
             opt.get('client_cidr'), opt.get('config_dir'),
             num_existing_tasktrackers=num_tasktrackers)
 
+    def start_cloudbase(self, argv, options_dict):
+        """Start the various cloudbase processes on the namenode and slave nodes - initialize the cloudbase instance, if necessary"""
+
+        opt, args = self.parse_options(self._command_name, argv, BASIC_OPTIONS)
+        opt.update(options_dict)
+        
+        self.service.start_cloudbase(options_dict.get("ssh_options"), options_dict.get("hadoop_user", "hadoop"))
+    
     def start_hadoop(self, argv, options_dict):
         """Start the various processes on the namenode and slave nodes"""
 
