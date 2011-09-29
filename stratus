@@ -102,6 +102,11 @@ SNAPSHOT_OPTIONS = BASIC_OPTIONS[:] + [
     help="SSH options to use."),
 ]
 
+DELETE_SECURITY_GROUPS_OPTIONS = BASIC_OPTIONS[:] + [
+  make_option("--force", action="store_true", default=False,
+    help="Force the deletion without confirmation. BE CAREFUL!")
+]
+
 # load the service plugin based on the service type
 plugin_manager = None
 
@@ -136,7 +141,7 @@ def _config_parser_read(self, fp, fpname):
         logging.debug("this_dir for section %s is set to %s." % (section, dirname))
     return rv
 
-def parse_options_and_config(command, option_list=[], extra_arguments=(),
+def parse_options_and_config(command, option_list=[], expected_arguments=("CLUSTER",),
                              unbounded_args=False, description=None):
   """
   Parse the arguments to command using the given option list, and combine with
@@ -147,8 +152,6 @@ def parse_options_and_config(command, option_list=[], extra_arguments=(),
   Otherwise there must be exactly the same number of arguments as
   extra_arguments.
   """
-  expected_arguments = ["CLUSTER",]
-  expected_arguments.extend(extra_arguments)
   (options_dict, args) = parse_options(command, option_list, expected_arguments,
                                        unbounded_args, description=description)
 
@@ -254,6 +257,9 @@ def print_usage(script):
                                         options) 
     list                             list the available clusters
     list-storage                     list the EBS volumes currently in use
+
+    delete-security-groups FILTER    can use wildcards to get all groups for 
+                                     a cluster (e.g, cluster-name*)
 
     You can supply the --help option to any COMMAND to see arguments specific to
     that command. Example: stratus list --help
@@ -422,6 +428,54 @@ def create_formatted_snapshot(size, ami, zone, region, key_name, ssh_options):
                                          key_name,
                                          ssh_options)
 
+def delete_security_groups(filters, force=False):
+    ec2 = boto.connect_ec2()
+
+    groups = []
+    for filter in filters:
+        groups.extend(ec2.get_all_security_groups(filters={"group-name": filter}))
+
+    if not groups:
+        print "No security groups found matching your input. Try again."
+        return
+
+    if not force:
+        print "Found the following groups:"
+        groups.sort(lambda x, y: cmp(x.name, y.name))
+        instances_connected = False
+        for g in groups:
+            s = "\t%s" % g.name
+            if g.instances():
+                s += " *"
+                instances_connected = True
+            print s
+
+        if instances_connected:
+            print """
+NOTE: the groups marked with an asterisk (*) above are currently being
+used by actively running instances and will NOT be deleted. Please
+shut down the instances prior to deleting these groups.
+"""
+
+
+
+        try:
+            choice = raw_input("Delete these groups? (yes or no): ").lower()
+
+            if choice == "no":
+                print "Aborting."
+            elif choice == "yes":
+                for g in groups:
+                    if not g.instances():
+                        print "Deleting %s..." % g.name
+                        g.delete()
+                    else:
+                        print "Skipping %s because it's in use..." % g.name
+            else:
+                print "Invalid option. Try 'yes' or 'no'"
+        except KeyboardInterrupt:
+            print "\nAborting."
+
 def main():
 
     if "--version" in sys.argv:
@@ -443,6 +497,15 @@ def main():
         (options_dict, args) = parse_options(command, LIST_STORAGE_OPTIONS,
                                              description="List the storage volumes currently in use.")
         list_storage(options_dict)
+
+    elif command == 'delete-security-groups':
+        (options_dict, args, _) = parse_options_and_config(command, DELETE_SECURITY_GROUPS_OPTIONS,
+                                             expected_arguments=("FILTERS ...",),
+                                             unbounded_args=True,
+                                             description="Delete the security group matching the given filter(s)")
+
+        delete_security_groups(args, force=options_dict['force'])
+
     elif command == 'exec':
         exec_description = """Executes the CMD for a given cluster name CLUSTER with OPTIONS. Leave CMD
 out to see a list of valid commands and arguments."""
