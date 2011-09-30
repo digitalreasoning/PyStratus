@@ -35,6 +35,11 @@ where COMMAND and [OPTIONS] may be one of:
   get-hbase-config-files              gets the given config files from the namenode
                                         and stores them in the cwd 
 
+                             CLOUDBASE COMMANDS
+  ----------------------------------------------------------------------------------
+  start-cloudbase                     starts processes on namenode and datanodes
+  stop-cloudbase                      stops proceses on namenode and datanodes
+
                                CLUSTER COMMANDS
   ----------------------------------------------------------------------------------
   details                             list instances in CLUSTER
@@ -135,6 +140,9 @@ where COMMAND and [OPTIONS] may be one of:
 
         elif self._command_name == "start-cloudbase":
             self.start_cloudbase(argv, options_dict)
+
+        elif self._command_name == "stop-cloudbase":
+            self.stop_cloudbase(argv, options_dict)
             
         else:
             self.print_help()
@@ -231,9 +239,13 @@ where COMMAND and [OPTIONS] may be one of:
         #Once the cluster is up, if the provider is Cloudbase, we need to ensure that Cloudbase has been initialized
         #and launch the servers
         if provider == "cloudbase":
+
             #log in to the master and run a startup script
             print "Provider is cloudbase - starting cloudbase processes ... please wait"
-            self.service.start_cloudbase(options_dict.get("ssh_options"), options_dict.get("hadoop_user", "hadoop"))
+            self.service.start_cloudbase(options_dict.get("ssh_options"),
+                options_dict,
+                options_dict.get("hadoop_user", "hadoop"),
+                options_dict.get("ssh_user", "root"))
             
         print "Finished - browse the cluster at http://%s/" % master.public_dns_name
  
@@ -359,11 +371,23 @@ where COMMAND and [OPTIONS] may be one of:
 
     def start_cloudbase(self, argv, options_dict):
         """Start the various cloudbase processes on the namenode and slave nodes - initialize the cloudbase instance, if necessary"""
-
+        
         opt, args = self.parse_options(self._command_name, argv, BASIC_OPTIONS)
         opt.update(options_dict)
+
+        self.service.start_cloudbase(options_dict.get("ssh_options"),
+            options_dict, 
+            options_dict.get("hadoop_user", "hadoop"), 
+            options_dict.get("ssh_user", "root"))
+
+    def stop_cloudbase(self, argv, options_dict):
+        """Stop the various cloudbase processes on the namenode and slave
+        nodes"""
         
-        self.service.start_cloudbase(options_dict.get("ssh_options"), options_dict.get("hadoop_user", "hadoop"))
+        opt, args = self.parse_options(self._command_name, argv, BASIC_OPTIONS)
+        opt.update(options_dict)
+
+        self.service.stop_cloudbase(options_dict)
     
     def start_hadoop(self, argv, options_dict):
         """Start the various processes on the namenode and slave nodes"""
