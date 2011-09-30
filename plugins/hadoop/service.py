@@ -547,6 +547,19 @@ class HadoopService(ServicePlugin):
 
         cmd = "ps aux | grep 'cloudbase\.' | wc -l"
 
+        # start namenode processes
+        env.host_string = namenode.public_dns_name
+        fab_output = run(cmd)
+        if fab_output != "0":
+            print("Cloudbase already running on master %s" % env.host_string)
+        else:
+            print("Updating the master slaves file")
+            sudo('echo "%s" > $CLOUDBASE_CONF_DIR/slaves' % slaves)
+
+            print "Starting cloudbase master processes..."
+            self._remote_start_cloudbase_processes(namenode, "master", ssh_options,
+                as_user=as_user, ssh_user=ssh_user)
+ 
         # start processes on data node
         for i, datanode in enumerate(datanodes):
 
@@ -563,19 +576,7 @@ class HadoopService(ServicePlugin):
                 self._remote_start_cloudbase_processes(datanode, "slave",
                     ssh_options, as_user=as_user, ssh_user=ssh_user)
 
-        # start namenode processes
-        env.host_string = namenode.public_dns_name
-        fab_output = run(cmd)
-        if fab_output != "0":
-            print("Cloudbase already running on master %s" % env.host_string)
-        else:
-            print("Updating the master slaves file")
-            sudo('echo "%s" > $CLOUDBASE_CONF_DIR/slaves' % slaves)
-
-            print "Starting cloudbase master processes..."
-            self._remote_start_cloudbase_processes(namenode, "master", ssh_options,
-                as_user=as_user, ssh_user=ssh_user)
-        
+       
     def stop_cloudbase(self, options):
         """Stop cloudbase processes."""
 
