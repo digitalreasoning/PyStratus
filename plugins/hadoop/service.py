@@ -515,13 +515,6 @@ class HadoopService(ServicePlugin):
             self._daemon_control(datanode, "hbase", "regionserver", "start", ssh_options, as_user=as_user)
             i += 1
 
-    #Note: the server_type parameter must be either "master" or "slave"
-    def _remote_start_cloudbase_processes(self, instance, server_type, ssh_options, as_user="hadoop", ssh_user="root"):
-        command = 'sudo -i -u %(as_user)s /bin/bash -c "/usr/bin/drsi-init-%(server_type)s.sh"' % locals()
-        self.logger.info("Starting %s processes: %s" % (server_type, command))
-        ssh_command = self._get_standard_ssh_command(instance, ssh_options, command, ssh_user)
-        subprocess.call(ssh_command, shell=True)
-        
     def start_cloudbase(self, ssh_options, options, as_user="hadoop", ssh_user="root"):
 
         namenode = self.get_namenode()
@@ -545,42 +538,77 @@ class HadoopService(ServicePlugin):
         env.user = ssh_user
         env.disable_known_hosts = True
 
-        cmd = "ps aux | grep 'cloudbase\.' | wc -l"
+        print("Updating ssh keys and master/slave config files...")
 
         # start namenode processes
         env.host_string = namenode.public_dns_name
-        fab_output = run(cmd)
+
+        # create keypair - but only copy it to the slaves if it's new
+        key_filename = "/home/%s/.ssh/id_rsa" % as_user
+        auth_file = "/home/%s/.ssh/authorized_keys" % as_user
+        ssh_config = "/home/%s/.ssh/config" % as_user
+        cmd = ("function f() { mkdir -p /home/%(as_user)s/.ssh; "
+            "if [ ! -f %(key_filename)s ]; then "
+            "ssh-keygen -f %(key_filename)s -N '' -q; else return 1; fi; }; "
+            "f" % locals())
+        with settings(hide('warnings', 'running', 'stdout', 'stderr'), warn_only=True):
+
+            fab_output = run('sudo -i -u %(as_user)s /bin/bash -c "%(cmd)s"' % locals())
+            if fab_output.return_code:
+                self.logger.debug("Using existing keypair") 
+                copy_keyfile = False
+            else:
+                self.logger.debug("Creating new keypair") 
+                run('sudo -i -u %(as_user)s /bin/bash -c "cat %(key_filename)s.pub >> %(auth_file)s"' % locals())
+                run('sudo -i -u %(as_user)s /bin/bash -c "echo StrictHostKeyChecking=no >> %(ssh_config)s"' % locals())
+                copy_keyfile = True
+                keypair = run('sudo -i -u %(as_user)s /bin/bash -c "cat %(key_filename)s"' % locals())
+                keypair_pub = run('sudo -i -u %(as_user)s /bin/bash -c "cat %(key_filename)s.pub"' % locals())
+
+        cb_alive_cmd = "ps aux | grep 'cloudbase\.' | wc -l"
+        fab_output = run(cb_alive_cmd)
         if fab_output != "0":
             print("Cloudbase already running on master %s" % env.host_string)
         else:
-            print("Updating the master slaves file")
+            self.logger.info("Updating the master slaves file")
             sudo('echo "%s" > $CLOUDBASE_CONF_DIR/slaves' % slaves)
 
-            print "Starting cloudbase master processes..."
-            self._remote_start_cloudbase_processes(namenode, "master", ssh_options,
-                as_user=as_user, ssh_user=ssh_user)
+            self.logger.debug("Initializing cloudbase")
+            cmd = 'sudo -i -u %(as_user)s /bin/bash -c "/usr/bin/drsi-init-master.sh"' % locals()
+            run(cmd)
  
         # start processes on data node
         for i, datanode in enumerate(datanodes):
 
             env.host_string = datanode.public_dns_name
 
-            fab_output = run(cmd)
+            if copy_keyfile:
+                cmd = ('sudo -i -u %(as_user)s /bin/bash -c '
+                    '"mkdir -p /home/%(as_user)s/.ssh && '
+                    'echo %(keypair)s > %(key_filename)s && '
+                    'echo %(keypair_pub)s > %(key_filename)s.pub && '
+                    'chmod 600 %(key_filename)s && '
+                    'echo %(keypair_pub)s >> %(auth_file)s"' % locals())
+                run(cmd)
+                run('sudo -i -u %(as_user)s /bin/bash -c "echo StrictHostKeyChecking=no >> %(ssh_config)s"' % locals())
+
+            fab_output = run(cb_alive_cmd)
             if fab_output != "0":
                 print("Cloudbase already running on datanode %s" % env.host_string)
             else:
-                print("Updating the datanode slaves file")
+                self.logger.info("Updating the datanode slaves file")
                 sudo('echo "%s" > $CLOUDBASE_CONF_DIR/slaves' % slaves)
 
-                print "Starting cloudbase slave #%d processes..." % (i+1)
-                self._remote_start_cloudbase_processes(datanode, "slave",
-                    ssh_options, as_user=as_user, ssh_user=ssh_user)
-
+        print "Starting cloudbase..."
+        env.host_string = namenode.public_dns_name
+        cmd = 'sudo -i -u %(as_user)s /bin/bash -c "$CLOUDBASE_HOME/bin/start-all.sh"' % locals()
+        run(cmd)
        
     def stop_cloudbase(self, options):
         """Stop cloudbase processes."""
 
-        # just killing the pids associated with cloudbase
+        # just killing the pids associated with cloudbase (vs using stop-all.sh
+        # which actually stops all of the hadoop processes as well)
         cmd = "ps aux | grep 'cloudbase\.' | awk '{print $2}' | xargs kill"
         
         namenode = self.get_namenode()
