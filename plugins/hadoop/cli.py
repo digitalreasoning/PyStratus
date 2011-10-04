@@ -1,4 +1,5 @@
 import sys
+import os
 import logging
 import urllib
 
@@ -157,11 +158,9 @@ where COMMAND and [OPTIONS] may be one of:
                                        expected_arguments=expected_arguments)
         opt.update(options_dict)
 
-        provider = opt.get("provider")
-        if provider is None:
-            provider = "hbase"
-        else:
-            provider.lower()
+        # if PROVIDER is set in the environment that takes precedence over
+        # anything in the clusters.cfg; hbase is the default if nothing is set
+        provider = os.environ.get("PROVIDER", opt.get("provider", "hbase")).lower()
 
         number_of_slaves = int(args[0])
         master_templates = [

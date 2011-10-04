@@ -570,8 +570,8 @@ class HadoopService(ServicePlugin):
         if fab_output != "0":
             print("Cloudbase already running on master %s" % env.host_string)
         else:
-            self.logger.info("Updating the master slaves file")
-            sudo('echo "%s" > $CLOUDBASE_CONF_DIR/slaves' % slaves)
+            self.logger.info("Updating the master slaves file (%s)" % slaves)
+            sudo('echo "%s" > /usr/local/cloudbase/conf/slaves' % slaves)
 
             self.logger.debug("Initializing cloudbase")
             cmd = 'sudo -i -u %(as_user)s /bin/bash -c "/usr/bin/drsi-init-master.sh"' % locals()
@@ -596,12 +596,12 @@ class HadoopService(ServicePlugin):
             if fab_output != "0":
                 print("Cloudbase already running on datanode %s" % env.host_string)
             else:
-                self.logger.info("Updating the datanode slaves file")
-                sudo('echo "%s" > $CLOUDBASE_CONF_DIR/slaves' % slaves)
+                self.logger.info("Updating the datanode slaves file (%s)" % slaves)
+                sudo('echo "%s" > /usr/local/cloudbase/conf/slaves' % slaves)
 
         print "Starting cloudbase..."
         env.host_string = namenode.public_dns_name
-        cmd = 'sudo -i -u %(as_user)s /bin/bash -c "$CLOUDBASE_HOME/bin/start-all.sh"' % locals()
+        cmd = 'sudo -i -u %(as_user)s /bin/bash -c "/usr/local/cloudbase/bin/start-all.sh"' % locals()
         run(cmd)
        
     def stop_cloudbase(self, options):
