@@ -515,6 +515,18 @@ class HadoopService(ServicePlugin):
             self._daemon_control(datanode, "hbase", "regionserver", "start", ssh_options, as_user=as_user)
             i += 1
 
+    def _wrap_user(self, cmd, as_user):
+        """Wrap a command with the proper sudo incantation to run as as_user"""
+        return 'sudo -i -u %(as_user)s %(cmd)s' % locals()
+
+    def _create_tempfile(self, content):
+        """Create a tempfile, and fill it with content, return the tempfile 
+        object for closing when done."""
+        tmpfile = tempfile.NamedTemporaryFile()
+        tmpfile.write(content)
+        tmpfile.file.flush()
+        return tmpfile
+
     def start_cloudbase(self, ssh_options, options, as_user="hadoop", ssh_user="root"):
 
         namenode = self.get_namenode()
@@ -544,26 +556,43 @@ class HadoopService(ServicePlugin):
         env.host_string = namenode.public_dns_name
 
         # create keypair - but only copy it to the slaves if it's new
-        key_filename = "/home/%s/.ssh/id_rsa" % as_user
-        auth_file = "/home/%s/.ssh/authorized_keys" % as_user
-        ssh_config = "/home/%s/.ssh/config" % as_user
-        cmd = ("function f() { mkdir -p /home/%(as_user)s/.ssh; "
+        ssh_dir = "/home/%s/.ssh" % as_user
+        key_filename = "%s/id_rsa" % ssh_dir
+        auth_file = "%s/authorized_keys" % ssh_dir
+        ssh_config = "%s/config" % ssh_dir 
+        ssh_cmd = ("function f() { mkdir -p /home/%(as_user)s/.ssh; "
             "if [ ! -f %(key_filename)s ]; then "
             "ssh-keygen -f %(key_filename)s -N '' -q; else return 1; fi; }; "
             "f" % locals())
+
+        tmpfile = self._create_tempfile(ssh_cmd)
+
         with settings(hide('warnings', 'running', 'stdout', 'stderr'), warn_only=True):
 
-            fab_output = run('sudo -i -u %(as_user)s /bin/bash -c "%(cmd)s"' % locals())
+            # dump ssh_cmd to a temp file
+            temp_file = run(self._wrap_user("mktemp", ssh_user))
+            put(tmpfile.name, temp_file.stdout)
+            run('sudo chmod 755 %(temp_file)s' % locals())
+            fab_output = run(self._wrap_user('%(temp_file)s' % locals(), as_user))
+            sudo("rm %s" % temp_file.stdout)
+
             if fab_output.return_code:
                 self.logger.debug("Using existing keypair") 
                 copy_keyfile = False
             else:
                 self.logger.debug("Creating new keypair") 
-                run('sudo -i -u %(as_user)s /bin/bash -c "cat %(key_filename)s.pub >> %(auth_file)s"' % locals())
-                run('sudo -i -u %(as_user)s /bin/bash -c "echo StrictHostKeyChecking=no >> %(ssh_config)s"' % locals())
+                # piping output into tee b/c redirecting in the original sudo
+                # command doesn't work consistently across various configurations
+                run(self._wrap_user("cat %(key_filename)s.pub | sudo -i -u %(as_user)s tee -a %(auth_file)s" % locals(), as_user))
+                run(self._wrap_user("echo StrictHostKeyChecking=no | sudo -i -u %(as_user)s tee -a %(ssh_config)s" % locals(), as_user))
                 copy_keyfile = True
-                keypair = run('sudo -i -u %(as_user)s /bin/bash -c "cat %(key_filename)s"' % locals())
-                keypair_pub = run('sudo -i -u %(as_user)s /bin/bash -c "cat %(key_filename)s.pub"' % locals())
+                keypair = run(self._wrap_user("cat %(key_filename)s" % locals(), as_user))
+                keypair_pub = run(self._wrap_user("cat %(key_filename)s.pub" % locals(), as_user))
+
+                # once everything's inplace, set the owner to as_user
+                sudo("chown -R %(as_user)s:%(as_user)s %(ssh_dir)s" % locals())
+
+        tmpfile.close()
 
         cb_alive_cmd = "ps aux | grep 'cloudbase\.' | wc -l"
         fab_output = run(cb_alive_cmd)
@@ -574,8 +603,7 @@ class HadoopService(ServicePlugin):
             sudo('echo "%s" > /usr/local/cloudbase/conf/slaves' % slaves)
 
             self.logger.debug("Initializing cloudbase")
-            cmd = 'sudo -i -u %(as_user)s /bin/bash -c "/usr/bin/drsi-init-master.sh"' % locals()
-            run(cmd)
+            run(self._wrap_user("/usr/bin/drsi-init-master.sh", as_user))
  
         # start processes on data node
         for i, datanode in enumerate(datanodes):
@@ -583,14 +611,22 @@ class HadoopService(ServicePlugin):
             env.host_string = datanode.public_dns_name
 
             if copy_keyfile:
-                cmd = ('sudo -i -u %(as_user)s /bin/bash -c '
-                    '"mkdir -p /home/%(as_user)s/.ssh && '
-                    'echo %(keypair)s > %(key_filename)s && '
-                    'echo %(keypair_pub)s > %(key_filename)s.pub && '
-                    'chmod 600 %(key_filename)s && '
-                    'echo %(keypair_pub)s >> %(auth_file)s"' % locals())
-                run(cmd)
-                run('sudo -i -u %(as_user)s /bin/bash -c "echo StrictHostKeyChecking=no >> %(ssh_config)s"' % locals())
+                
+                run(self._wrap_user("mkdir -p /home/%s/.ssh" % as_user, as_user))
+
+                temp_keyfile = self._create_tempfile(keypair)
+                put(temp_keyfile.name, key_filename, use_sudo=True)
+                temp_keyfile.close()
+                temp_pubfile = self._create_tempfile(keypair_pub)
+                put(temp_pubfile.name, "%s.pub" % key_filename, use_sudo=True)
+                temp_pubfile.close()
+
+                cmd = ('chmod 600 %(key_filename)s && '
+                    'cat %(key_filename)s.pub >> %(auth_file)s' % locals())
+                sudo(cmd)
+                run(self._wrap_user("echo StrictHostKeyChecking=no | sudo -i -u %(as_user)s tee -a %(ssh_config)s" % locals(), as_user))
+                # once everything's inplace, set the owner to as_user
+                sudo("chown -R %(as_user)s:%(as_user)s %(ssh_dir)s" % locals())
 
             fab_output = run(cb_alive_cmd)
             if fab_output != "0":
@@ -601,8 +637,7 @@ class HadoopService(ServicePlugin):
 
         print "Starting cloudbase..."
         env.host_string = namenode.public_dns_name
-        cmd = 'sudo -i -u %(as_user)s /bin/bash -c "/usr/local/cloudbase/bin/start-all.sh"' % locals()
-        run(cmd)
+        run(self._wrap_user("/usr/local/cloudbase/bin/start-all.sh", as_user))
        
     def stop_cloudbase(self, options):
         """Stop cloudbase processes."""
