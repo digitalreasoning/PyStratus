@@ -445,7 +445,8 @@ def delete_security_groups(filters, force=False):
         instances_connected = False
         for g in groups:
             s = "\t%s" % g.name
-            if g.instances():
+            instances = [i.update() for i in g.instances() if i.state == "running"]
+            if instances:
                 s += " *"
                 instances_connected = True
             print s
@@ -466,7 +467,7 @@ shut down the instances prior to deleting these groups.
                 print "Aborting."
             elif choice == "yes":
                 for g in groups:
-                    if not g.instances():
+                    if not [i.update() for i in g.instances() if i.state == "running"]:
                         print "Deleting %s..." % g.name
                         g.delete()
                     else:

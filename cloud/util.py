@@ -72,6 +72,15 @@ def merge_config_with_options(section_name, config, options):
         res[key] = value
   except ConfigParser.NoSectionError:
     pass
+  except ValueError, e:
+    # incomplete format error usually means you forgot
+    # to include the type for interpolation
+    if "incomplete format" in e.message:
+       msg = "Section '%s'. Double check that your formatting " \
+             "contains the format type after the closing parantheses. " \
+             "Example: %%(foo)s" % section_name
+       raise ConfigParser.InterpolationError(options, section_name, msg)
+
   for key in options:
     if options[key] != None:
       res[key] = options[key]
