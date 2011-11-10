@@ -515,25 +515,171 @@ class HadoopService(ServicePlugin):
             self._daemon_control(datanode, "hbase", "regionserver", "start", ssh_options, as_user=as_user)
             i += 1
 
-    #Note: the server_type parameter must be either "master" or "slave"
-    def _remote_start_cloudbase_processes(self, instance, server_type, ssh_options, as_user="hadoop"):
-        command = "su -s /bin/bash - %s -c \"/usr/bin/drsi-init-%s.sh\"" % (as_user, server_type)
-        self.logger.info("Starting %s processes: %s" % (server_type, command))
-        ssh_command = self._get_standard_ssh_command(instance, ssh_options, command)
-        subprocess.call(ssh_command, shell=True)
-        
-    def start_cloudbase(self, ssh_options, as_user="hadoop"):
-        # start processes on data node
-        i = 1
-        for datanode in datanodes:
-            print "Starting cloudbase slave #%d processes..." % i
-            self._remote_start_cloudbase_processes(datanode, "slave", ssh_options, as_user=as_user)
-            i += 1
+    def _wrap_user(self, cmd, as_user):
+        """Wrap a command with the proper sudo incantation to run as as_user"""
+        return 'sudo -i -u %(as_user)s %(cmd)s' % locals()
 
-	# start namenode processes
-        print "Starting cloudbase master processes..."
-        self._remote_start_cloudbase_processes(namenode, "master", ssh_options, as_user=as_user)
+    def _create_tempfile(self, content):
+        """Create a tempfile, and fill it with content, return the tempfile 
+        object for closing when done."""
+        tmpfile = tempfile.NamedTemporaryFile()
+        tmpfile.write(content)
+        tmpfile.file.flush()
+        return tmpfile
+
+    def start_cloudbase(self, ssh_options, options, as_user="hadoop", ssh_user="root"):
+
+        namenode = self.get_namenode()
+        if not namenode:
+            self.logger.error("No namenode running. Aborting.")
+            return None
+
+        datanodes = self.get_datanodes()
+        if not datanodes:
+            self.logger.error("No datanodes running. Aborting.")
+            return None
+
+        # get list of slaves for the slaves file
+        slaves = "\n".join([dn.public_dns_name for dn in datanodes])
+
+        # fabric configuration
+        env.key_filename = options.get("private_key", "--")
+        if env.key_filename == "--":
+            print("Option private_key not found, unable to start cloudbase")
+            return False
+        env.user = ssh_user
+        env.disable_known_hosts = True
+
+        print("Updating ssh keys and master/slave config files...")
+
+        # start namenode processes
+        env.host_string = namenode.public_dns_name
+
+        # create keypair - but only copy it to the slaves if it's new
+        ssh_dir = "/home/%s/.ssh" % as_user
+        key_filename = "%s/id_rsa" % ssh_dir
+        auth_file = "%s/authorized_keys" % ssh_dir
+        ssh_config = "%s/config" % ssh_dir 
+        ssh_cmd = ("function f() { mkdir -p /home/%(as_user)s/.ssh; "
+            "if [ ! -f %(key_filename)s ]; then "
+            "ssh-keygen -f %(key_filename)s -N '' -q; else return 1; fi; }; "
+            "f" % locals())
+
+        tmpfile = self._create_tempfile(ssh_cmd)
+
+        with settings(hide('warnings', 'running', 'stdout', 'stderr'), warn_only=True):
+
+            # dump ssh_cmd to a temp file
+            temp_file = run(self._wrap_user("mktemp", ssh_user))
+            put(tmpfile.name, temp_file.stdout)
+            run('sudo chmod 755 %(temp_file)s' % locals())
+            fab_output = run(self._wrap_user('%(temp_file)s' % locals(), as_user))
+            sudo("rm %s" % temp_file.stdout)
+
+            if fab_output.return_code:
+                self.logger.debug("Using existing keypair") 
+                copy_keyfile = False
+            else:
+                self.logger.debug("Creating new keypair") 
+                # piping output into tee b/c redirecting in the original sudo
+                # command doesn't work consistently across various configurations
+                run(self._wrap_user("cat %(key_filename)s.pub | sudo -i -u %(as_user)s tee -a %(auth_file)s" % locals(), as_user))
+                run(self._wrap_user("echo StrictHostKeyChecking=no | sudo -i -u %(as_user)s tee -a %(ssh_config)s" % locals(), as_user))
+                copy_keyfile = True
+                keypair = run(self._wrap_user("cat %(key_filename)s" % locals(), as_user))
+                keypair_pub = run(self._wrap_user("cat %(key_filename)s.pub" % locals(), as_user))
+
+                # once everything's inplace, set the owner to as_user
+                sudo("chown -R %(as_user)s:%(as_user)s %(ssh_dir)s" % locals())
+
+        tmpfile.close()
+
+        cb_alive_cmd = "ps aux | grep 'cloudbase\.' | wc -l"
+        fab_output = run(cb_alive_cmd)
+        if fab_output != "0":
+            print("Cloudbase already running on master %s" % env.host_string)
+        else:
+            self.logger.info("Updating the master slaves file (%s)" % slaves)
+            sudo('echo "%s" > /usr/local/cloudbase/conf/slaves' % slaves)
+
+            self.logger.debug("Initializing cloudbase")
+            run(self._wrap_user("/usr/bin/drsi-init-master.sh", as_user))
+ 
+        # start processes on data node
+        for i, datanode in enumerate(datanodes):
+
+            env.host_string = datanode.public_dns_name
+
+            if copy_keyfile:
+                
+                run(self._wrap_user("mkdir -p /home/%s/.ssh" % as_user, as_user))
+
+                temp_keyfile = self._create_tempfile(keypair)
+                put(temp_keyfile.name, key_filename, use_sudo=True)
+                temp_keyfile.close()
+                temp_pubfile = self._create_tempfile(keypair_pub)
+                put(temp_pubfile.name, "%s.pub" % key_filename, use_sudo=True)
+                temp_pubfile.close()
+
+                cmd = ('chmod 600 %(key_filename)s && '
+                    'cat %(key_filename)s.pub >> %(auth_file)s' % locals())
+                sudo(cmd)
+                run(self._wrap_user("echo StrictHostKeyChecking=no | sudo -i -u %(as_user)s tee -a %(ssh_config)s" % locals(), as_user))
+                # once everything's inplace, set the owner to as_user
+                sudo("chown -R %(as_user)s:%(as_user)s %(ssh_dir)s" % locals())
+
+            fab_output = run(cb_alive_cmd)
+            if fab_output != "0":
+                print("Cloudbase already running on datanode %s" % env.host_string)
+            else:
+                self.logger.info("Updating the datanode slaves file (%s)" % slaves)
+                sudo('echo "%s" > /usr/local/cloudbase/conf/slaves' % slaves)
+
+        print "Starting cloudbase..."
+        env.host_string = namenode.public_dns_name
+        run(self._wrap_user("/usr/local/cloudbase/bin/start-all.sh", as_user))
+       
+    def stop_cloudbase(self, options):
+        """Stop cloudbase processes."""
+
+        # just killing the pids associated with cloudbase (vs using stop-all.sh
+        # which actually stops all of the hadoop processes as well)
+        cmd = "ps aux | grep 'cloudbase\.' | awk '{print $2}' | xargs kill"
         
+        namenode = self.get_namenode()
+        if not namenode:
+            self.logger.error("No namenode running. Aborting.")
+            return None
+
+        datanodes = self.get_datanodes()
+        if not datanodes:
+            self.logger.error("No datanodes running. Aborting.")
+            return None
+       
+        env.key_filename = options.get("private_key", "--")
+        if env.key_filename == "--":
+            print("Option private_key not found, unable to start cloudbase")
+            return False
+        env.user = options.get("ssh_user", "root")
+        env.disable_known_hosts = True
+        env.warn_only = True
+
+        print("Stopping cloudbase on %s datanode%s" % (len(datanodes), 
+            "s" if len(datanodes) > 1 else ""))
+        for datanode in datanodes:
+            env.host_string = datanode.public_dns_name
+            with hide("running", "stdout", "stderr", "warnings"):
+                fab_output = sudo(cmd)
+            if fab_output.return_code == 123:
+                print("  No cloudbase processes on %s" % env.host_string)
+
+        print("Stopping cloudbase on the masternode")
+        env.host_string = namenode.public_dns_name
+        with hide("running", "stdout", "stderr", "warnings"):
+            fab_output = sudo(cmd)
+        if fab_output.return_code == 123:
+            print("  No cloudbase processes on %s" % env.host_string)
+
     def get_config_files(self, file_paths, options):
         env.user = "root"
         env.key_filename = options["private_key"]

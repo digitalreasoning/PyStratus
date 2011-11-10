@@ -309,11 +309,11 @@ class ServicePlugin(object):
         else:
             storage.print_status()
 
-    def _get_standard_ssh_command(self, instance, ssh_options, remote_command=None):
+    def _get_standard_ssh_command(self, instance, ssh_options, remote_command=None, username="root"):
         """
         Returns the complete SSH command ready for execution on the instance.
         """
-        cmd = "ssh %s root@%s" % (xstr(ssh_options), 
+        cmd = "ssh %s %s@%s" % (xstr(ssh_options), username,
                                        instance.public_dns_name)
         
         if remote_command is not None:
