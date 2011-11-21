@@ -2,6 +2,8 @@ import sys
 import logging
 import urllib
 
+from optparse import make_option
+
 from cloud.plugin import CLIPlugin
 from cloud.plugin import BASIC_OPTIONS
 from cloud.service import InstanceTemplate
@@ -58,7 +60,7 @@ where COMMAND and [OPTIONS] may be one of:
         # handle all known commands and error on an unknown command
         if self._command_name == "details":
             self.print_instances()
-
+            
         elif self._command_name == "simple-details":
             self.simple_print_instances(argv, options_dict)
 
@@ -98,12 +100,14 @@ where COMMAND and [OPTIONS] may be one of:
         elif self._command_name == "print-ring":
             self.print_ring(argv, options_dict)
 
+        elif self._command_name == "hack-config-for-multi-region":
+            self.hack_config_for_multi_region(argv, options_dict)
+            
         elif self._command_name == "rebalance":
             self.rebalance(argv, options_dict)
 
         elif self._command_name == "remove-down-nodes":
             self.remove_down_nodes(argv, options_dict)
-
         else:
             self.print_help()
 
@@ -237,13 +241,25 @@ where COMMAND and [OPTIONS] may be one of:
             idx = int(argv[0])
         self.service.print_ring(options_dict.get('ssh_options'), instances[idx])
 
+    def hack_config_for_multi_region(self, argv, options_dict):
+        instances = self.service.get_instances()
+        if not instances:
+            print "No running instances. Aborting."
+            sys.exit(1)
+
+        opt_list = BASIC_OPTIONS + [make_option("--seeds", metavar="SEEDS", action="store", type="str", default="",  help="explicit comma separated seed list")]
+        opt, args = self.parse_options(self._command_name, argv, opt_list)
+
+        self.service.hack_config_for_multi_region(options_dict.get('ssh_options'), opt['seeds'])
+        
     def rebalance(self, argv, options_dict):
         instances = self.service.get_instances()
         if not instances:
             print "No running instances. Aborting."
             sys.exit(1)
 
-        self.service.rebalance(options_dict.get('ssh_options'))
+        opt, args = self.parse_options(self._command_name, argv, [make_option("--offset", metavar="OFFSET", action="store", type=int, default=0, help="token offset")])
+        self.service.rebalance(options_dict.get('ssh_options'), offset=opt['offset'])
 
     def remove_down_nodes(self, argv, options_dict):
         instances = self.service.get_instances()
