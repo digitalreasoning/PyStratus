@@ -19,6 +19,7 @@ Utility functions.
 
 import ConfigParser
 import socket
+from subprocess import Popen, PIPE, CalledProcessError
 import urllib2
 
 from boto.ec2 import regions as EC2Regions
@@ -71,6 +72,15 @@ def merge_config_with_options(section_name, config, options):
         res[key] = value
   except ConfigParser.NoSectionError:
     pass
+  except ValueError, e:
+    # incomplete format error usually means you forgot
+    # to include the type for interpolation
+    if "incomplete format" in e.message:
+       msg = "Section '%s'. Double check that your formatting " \
+             "contains the format type after the closing parantheses. " \
+             "Example: %%(foo)s" % section_name
+       raise ConfigParser.InterpolationError(options, section_name, msg)
+
   for key in options:
     if options[key] != None:
       res[key] = options[key]
@@ -94,3 +104,39 @@ def url_get(url, timeout=10, retries=0):
 def xstr(string):
   """Sane string conversion: return an empty string if string is None."""
   return '' if string is None else str(string)
+
+def check_output(*popenargs, **kwargs):
+  r"""Run command with arguments and return its output as a byte string.
+
+  If the exit code was non-zero it raises a CalledProcessError.  The
+  CalledProcessError object will have the return code in the returncode
+  attribute and output in the output attribute.
+
+  The arguments are the same as for the Popen constructor.  Example:
+
+  >>> check_output(["ls", "-l", "/dev/null"])
+  'crw-rw-rw- 1 root root 1, 3 Oct 18  2007 /dev/null\n'
+
+  The stdout argument is not allowed as it is used internally.
+  To capture standard error in the result, use stderr=STDOUT.
+
+  >>> check_output(["/bin/sh", "-c",
+  ...               "ls -l non_existent_file ; exit 0"],
+  ...              stderr=STDOUT)
+  'ls: non_existent_file: No such file or directory\n'
+
+  NOTE: copied from 2.7 standard library so that we maintain our compatibility with 2.5
+  """
+  if 'stdout' in kwargs:
+      raise ValueError('stdout argument not allowed, it will be overridden.')
+  process = Popen(stdout=PIPE, *popenargs, **kwargs)
+  output, unused_err = process.communicate()
+  retcode = process.poll()
+  if retcode:
+      cmd = kwargs.get("args")
+      if cmd is None:
+          cmd = popenargs[0]
+      raise CalledProcessError(retcode, cmd)
+  return output
+
+

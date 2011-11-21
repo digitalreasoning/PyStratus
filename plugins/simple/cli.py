@@ -16,6 +16,15 @@ class SimpleServiceCLI(CLIPlugin):
     USAGE = """Simple service usage: CLUSTER COMMAND [OPTIONS]
 where COMMAND and [OPTIONS] may be one of:
             
+                               APPLICATION COMMANDS
+  ----------------------------------------------------------------------------------
+  launch-load-balancer                launch a load balancer for CLUSTER
+  launch-nodes NUM_NODES              launch NUM_NODES nodes in CLUSTER
+  start-nodes                         start the nodes
+  stop-nodes                          stop the nodes
+  start-load-balancer                 start the load balancer
+  stop-load-balancer                  stop the load balancer
+
                                CLUSTER COMMANDS
   ----------------------------------------------------------------------------------
   details                             list instances in CLUSTER
@@ -23,6 +32,13 @@ where COMMAND and [OPTIONS] may be one of:
   expand-cluster NUM_NODES            adds new nodes
   terminate-cluster                   terminate all instances in CLUSTER
   login                               log in to the master in CLUSTER over SSH
+
+                               STORAGE COMMANDS
+  ----------------------------------------------------------------------------------
+  list-storage                        list storage volumes for CLUSTER
+  create-storage NUM_INSTANCES        create volumes for NUM_INSTANCES instances
+    SPEC_FILE                           for CLUSTER, using SPEC_FILE
+  delete-storage                      delete all storage volumes for CLUSTER
 """
 #  transfer FILE DESTINATION           transfer a file to all nodes
 #  execute COMMAND                     execute a command on all nodes
@@ -61,6 +77,21 @@ where COMMAND and [OPTIONS] may be one of:
         elif self._command_name == "login":
             self.login(argv, options_dict)
 
+        elif self._command_name == "run-command":
+            self.run_command(argv, options_dict)
+
+        elif self._command_name == "transfer-files":
+            self.transfer_files(argv, options_dict)
+
+        elif self._command_name == "create-storage":
+            self.create_storage(argv, options_dict)
+
+        elif self._command_name == "delete-storage":
+            self.delete_storage(argv, options_dict)
+
+        elif self._command_name == "list-storage":
+            self.print_storage()
+
         else:
             self.print_help()
 
@@ -71,11 +102,6 @@ where COMMAND and [OPTIONS] may be one of:
                                        expected_arguments=expected_arguments,
                                        unbounded_args=True)
         opt.update(options_dict)
-
-        # check for the cassandra-specific files
-        if opt.get('cassandra_config_file') is None:
-            print "ERROR: No cassandra_config_file configured. Aborting."
-            sys.exit(1)
 
         number_of_nodes = int(args[0])
         instance_template = InstanceTemplate(
@@ -96,7 +122,7 @@ where COMMAND and [OPTIONS] may be one of:
         print "Expanding cluster by %d instance(s)...please wait." % number_of_nodes
 
         self.service.expand_cluster(instance_template,
-                                    opt.get('ssh_options'))
+                                    opt.get('ssh_options'),opt.get('wait_dir', '/'))
 
     def launch_cluster(self, argv, options_dict):
         """
@@ -126,4 +152,22 @@ where COMMAND and [OPTIONS] may be one of:
         print "Launching cluster with %d instance(s)...please wait." % number_of_nodes
 
         self.service.launch_cluster(instance_template,
-                                    opt.get('ssh_options'))
+                                    opt.get('ssh_options'),opt.get('wait_dir', '/'))
+
+    def create_storage(self, argv, options_dict):
+        opt, args = self.parse_options(self._command_name, argv, BASIC_OPTIONS,
+                                       ["NUM_INSTANCES", "SPEC_FILE"])
+        opt.update(options_dict)
+
+        role = self.service.SIMPLE_NODE
+        number_of_instances = int(args[0])
+        spec_file = args[1]
+
+        # FIXME
+        # check_options_set(opt, ['availability_zone'])
+
+        self.service.create_storage(role, 
+                                    number_of_instances,
+                                    opt.get('availability_zone'),
+                                    spec_file)
+        self.print_storage()

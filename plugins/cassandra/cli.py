@@ -73,6 +73,9 @@ where COMMAND and [OPTIONS] may be one of:
         elif self._command_name == "expand-cluster":
             self.expand_cluster(argv, options_dict)
 
+        elif self._command_name == "replace-down-nodes":
+            self.replace_down_nodes(argv, options_dict)
+
         elif self._command_name == "login":
             self.login(argv, options_dict)
 
@@ -156,6 +159,49 @@ where COMMAND and [OPTIONS] may be one of:
         self.service.expand_cluster(instance_template,
                                     opt.get('ssh_options'),
                                     opt.get('cassandra_config_file'))
+
+    def replace_down_nodes(self, argv, options_dict):
+        opt, args = self.parse_options(self._command_name,
+                                       argv)
+        opt.update(options_dict)
+
+        # check for the cassandra-specific files
+        if opt.get('cassandra_config_file') is None:
+            print "ERROR: No cassandra_config_file configured. Aborting."
+            sys.exit(1)
+
+        # test files
+        for key in ['cassandra_config_file']:
+            if opt.get(key) is not None:
+                try:
+                    url = urllib.urlopen(opt.get(key))
+                    data = url.read()
+                except:
+                    raise
+                    print "The file defined by %s (%s) does not exist. Aborting." % (key, opt.get(key))
+                    sys.exit(1)
+
+        number_of_nodes = len(self.service.calc_down_nodes(opt.get('ssh_options')))
+        instance_template = InstanceTemplate(
+            (self.service.CASSANDRA_NODE,),
+            number_of_nodes,
+            opt.get('image_id'),
+            opt.get('instance_type'),
+            opt.get('key_name'),
+            opt.get('public_key'),
+            opt.get('user_data_file'),
+            opt.get('availability_zone'),
+            opt.get('user_packages'),
+            opt.get('auto_shutdown'),
+            opt.get('env'),
+            opt.get('security_groups'))
+#        instance_template.add_env_strings(["CLUSTER_SIZE=%d" % number_of_nodes])
+
+        print "Replacing %d down instance(s)...please wait." % number_of_nodes
+
+        self.service.replace_down_nodes(instance_template,
+                                        opt.get('ssh_options'),
+                                        opt.get('cassandra_config_file'))
 
     def launch_cluster(self, argv, options_dict):
         """

@@ -3,17 +3,26 @@ from __future__ import with_statement
 import os
 import sys
 import time
+import datetime
 import subprocess
 import urllib
 import tempfile
 import socket
 import re
 
+from fabric.api import *
+from fabric.state import output
+
 from cloud.cluster import TimeoutException
 from cloud.service import InstanceTemplate
 from cloud.plugin import ServicePlugin 
 from cloud.util import xstr
 from cloud.util import url_get
+
+# fabric output settings
+output.running = False
+output.stdout = False
+output.stderr = False
 
 class HadoopService(ServicePlugin):
     """
@@ -37,8 +46,8 @@ class HadoopService(ServicePlugin):
         return self.cluster.get_instances_in_role(self.NAMENODE, "running") + \
                self.cluster.get_instances_in_role(self.DATANODE, "running")
 
-    def launch_cluster(self, instance_templates, client_cidr, config_dir):
-        number_of_tasktrackers = 0
+    def launch_cluster(self, instance_templates, client_cidr, config_dir, num_existing_tasktrackers=0):
+        number_of_tasktrackers = num_existing_tasktrackers
         roles = []
         for it in instance_templates:
           roles.extend(it.roles)
@@ -107,8 +116,86 @@ class HadoopService(ServicePlugin):
         except TimeoutException:
             print "Timeout while waiting for Hadoop to start. Please check logs on" + \
                   " cluster."
-        return self._get_jobtracker()
+        return self.get_jobtracker()
 
+    def terminate_nodes(self, nodes, options):
+        """Terminate a subset of nodes from a cluster.
+        nodes is a list of boto.ec2.instance.Instance objects"""
+
+        exclude_hosts = ""
+        for node in nodes:
+            print("Terminating instance %s ... " % node.id),
+            exclude_hosts += node.private_dns_name + "\n"
+            node.terminate()
+            print("done")
+
+        print("Removing nodes from hadoop ..."),
+        env.host_string = self.get_namenode().public_dns_name
+        env.user = "root"
+        env.key_filename = options["private_key"]
+        hadoop_home = self.get_hadoop_home(env.key_filename)
+        run('echo "%s" > %s/conf/exclude' % (exclude_hosts.strip(), hadoop_home))
+        fab_output = run("sudo -u hadoop %s/bin/hadoop dfsadmin -refreshNodes" % 
+            hadoop_home)
+        fab_output = run("sudo -u hadoop %s/bin/hadoop mradmin -refreshNodes" %
+            hadoop_home)
+        print("done")
+
+    def _extract_dfs(self, dfs_output):
+        """Clean up and extract some info from dfsadmin output."""
+        
+        # trim off the top cruft
+        dfs_lines = dfs_output.splitlines()
+        for line in dfs_lines:
+            if line.startswith("---"):
+                break
+        datanode_lines = dfs_lines[dfs_lines.index(line)+1:]
+        dfs_summary = datanode_lines[0]
+
+        # now pull out info for each node
+        nodes = []
+        node_info_lines = "\n".join(datanode_lines[2:]).split("\n\n\n")
+        for node in node_info_lines:
+            node_info = [{line.split(": ")[0].strip().lower():line.split(": ")[1].strip()} 
+                for line in node.splitlines()]
+            nodes.append(
+                {"private_ip": node_info[0]["name"].split(":")[0],
+                 "last_contact": time.strptime(
+                    node_info[8]["last contact"],"%a %b %d %H:%M:%S %Z %Y")})
+
+        return nodes
+
+    def find_dead_nodes(self, cluster_name, options):
+        """Find a list of nodes that are dead."""
+        instances = self.get_instances()
+        name_nodes = self.cluster.get_instances_in_role(self.NAMENODE, "running")
+        if not name_nodes:
+            print("No name node found.")
+            return False
+
+        env.host_string = name_nodes[0].public_dns_name
+        env.user = "root"
+        env.key_filename = options["private_key"]
+        fab_output = run("sudo -u hadoop %s/bin/hadoop dfsadmin -report" % 
+            self.get_hadoop_home(env.key_filename))
+
+        # list of hdfs nodes
+        dfs_nodes = self._extract_dfs(fab_output)
+        dead_nodes = []
+        for node in dfs_nodes:
+
+            # hadoop appears to consider a node dead if it loses the heartbeat
+            # for 630 seconds (10.5 minutes)
+            time_lapse = (datetime.timedelta(seconds=time.mktime(time.gmtime())) 
+                - datetime.timedelta(seconds=time.mktime(node["last_contact"])))
+            if time_lapse.seconds > 630:
+                for instance in instances:
+                    if instance.private_ip_address == node["private_ip"]:
+                        dead_nodes.append(instance)
+                        break
+
+        return dead_nodes
+        
     def login(self, instance, ssh_options):
         ssh_command = self._get_standard_ssh_command(instance, ssh_options)
         subprocess.call(ssh_command, shell=True)
@@ -118,23 +205,60 @@ class HadoopService(ServicePlugin):
         Replace characters in role name with ones allowed in bash variable names
         """
         return role.replace('+', '_').upper()
-    
+   
+    def get_hadoop_home(self, private_key):
+        """Find out what HADOOP_HOME is on the namenode.  You must provide the
+        private_key necessary to connect to the namenode."""
+        
+        if not private_key:
+            return None
 
-    def _get_namenode(self):
+        with settings(host_string=self.get_namenode().public_dns_name):
+            env.user = "root"
+            env.key_filename = private_key
+            fab_output = run("echo $HADOOP_HOME")
+            return fab_output.rstrip() if fab_output else None
+
+    def get_hbase_home(self, private_key):
+        """Find out what HBASE_HOME is on the namenode.  You must provide the
+        private_key necessary to connect to the namenode."""
+        
+        if not private_key:
+            return None
+
+        with settings(host_string=self.get_namenode().public_dns_name):
+            env.user = "root"
+            env.key_filename = private_key
+            fab_output = run("echo $HBASE_HOME")
+            return fab_output.rstrip() if fab_output else None
+
+    def get_namenode(self):
         instances = self.cluster.get_instances_in_role(self.NAMENODE, "running")
         if not instances:
           return None
         return instances[0]
 
-    def _get_jobtracker(self):
+    def get_jobtracker(self):
         instances = self.cluster.get_instances_in_role(self.JOBTRACKER, "running")
         if not instances:
           return None
         return instances[0]
+
+    def get_datanodes(self):
+        instances = self.cluster.get_instances_in_role(self.DATANODE, "running")
+        if not instances:
+            return None
+        return instances
+
+    def get_tasktrackers(self):
+        instances = self.cluster.get_instances_in_role(self.TASKTRACKER, "running")
+        if not instances:
+            return None
+        return instances
     
     def _create_client_hadoop_site_file(self, config_dir):
-        namenode = self._get_namenode()
-        jobtracker = self._get_jobtracker()
+        namenode = self.get_namenode()
+        jobtracker = self.get_jobtracker()
         cluster_dir = os.path.join(config_dir, ".hadoop", self.cluster.name)
         aws_access_key_id = os.environ['AWS_ACCESS_KEY_ID']
         aws_secret_access_key = os.environ['AWS_SECRET_ACCESS_KEY']
@@ -143,8 +267,8 @@ class HadoopService(ServicePlugin):
           os.makedirs(cluster_dir)
 
         params = {
-            'namenode': self._get_namenode().public_dns_name,
-            'jobtracker': self._get_jobtracker().public_dns_name,
+            'namenode': namenode.public_dns_name,
+            'jobtracker': jobtracker.public_dns_name,
             'aws_access_key_id': os.environ['AWS_ACCESS_KEY_ID'],
             'aws_secret_access_key': os.environ['AWS_SECRET_ACCESS_KEY']
         }
@@ -200,8 +324,8 @@ class HadoopService(ServicePlugin):
             client_cidrs = ("%s/32" % client_ip,)
         self.logger.debug("Client CIDRs: %s", client_cidrs)
 
-        namenode = self._get_namenode()
-        jobtracker = self._get_jobtracker()
+        namenode = self.get_namenode()
+        jobtracker = self.get_jobtracker()
 
         for client_cidr in client_cidrs:
             # Allow access to port 80 on namenode from client
@@ -223,8 +347,9 @@ class HadoopService(ServicePlugin):
     def _wait_for_hadoop(self, number, timeout=600):
         wait_time = 3
         start_time = time.time()
-        jobtracker = self._get_jobtracker()
+        jobtracker = self.get_jobtracker()
         if not jobtracker:
+            self.logger.debug("No jobtracker found")
             return
 
         self.logger.debug("Waiting for jobtracker to start...")
@@ -242,6 +367,8 @@ class HadoopService(ServicePlugin):
         if number > 0:
             self.logger.debug("Waiting for %d tasktrackers to start" % number)
             while actual_running < number:
+                self.logger.debug("actual_running: %s" % actual_running)
+                self.logger.debug("number: %s" % number)
                 if (time.time() - start_time >= timeout):
                     raise TimeoutException()
                 try:
@@ -251,6 +378,7 @@ class HadoopService(ServicePlugin):
                     previous_running = actual_running
                 except IOError:
                     pass
+            self.logger.debug("actual_running = number (%s = %s)" % (actual_running, number))
         
     # The optional ?type=active is a difference between Hadoop 0.18 and 0.20
     _NUMBER_OF_TASK_TRACKERS = re.compile(r'<a href="machines.jsp(?:\?type=active)?">(\d+)</a>')
@@ -267,7 +395,7 @@ class HadoopService(ServicePlugin):
         if instances is None:
             return None
 
-        namenode = self._get_namenode()
+        namenode = self.get_namenode()
         if namenode is None:
             self.logger.error("No namenode running. Aborting.")
             return None
@@ -285,4 +413,333 @@ class HadoopService(ServicePlugin):
             shell=True)
         
         return process.pid
-    
+
+    def _daemon_control(self, instance, service, daemon, action, ssh_options, as_user="hadoop"):
+        command = "su -s /bin/bash - %s -c \"%s-daemon.sh %s %s\"" % (as_user, service, action, daemon)
+        ssh_command = self._get_standard_ssh_command(instance, ssh_options, command)
+        subprocess.call(ssh_command, shell=True)
+
+    def stop_hadoop(self, ssh_options, as_user="hadoop"):
+        namenode = self.get_namenode()
+        if namenode is None:
+            self.logger.error("No namenode running. Aborting.")
+            return None
+
+        datanodes = self.get_datanodes()
+        if datanodes is None:
+            self.logger.error("No datanodes running. Aborting.")
+            return None
+
+        # kill processes on data node
+        i = 1
+        for datanode in datanodes:
+            print "Stopping datanode #%d processes..." % i
+            self._daemon_control(datanode, "hadoop", "tasktracker", "stop", ssh_options, as_user=as_user)
+            self._daemon_control(datanode, "hadoop", "datanode", "stop", ssh_options, as_user=as_user)
+            i += 1
+
+        # kill namenode processes
+        print "Stopping namenode processes..."
+        self._daemon_control(namenode, "hadoop", "jobtracker", "stop", ssh_options, as_user=as_user)
+        self._daemon_control(namenode, "hadoop", "secondarynamenode", "stop", ssh_options, as_user=as_user)
+        self._daemon_control(namenode, "hadoop", "namenode", "stop", ssh_options, as_user=as_user)
+
+    def start_hadoop(self, ssh_options, as_user="hadoop"):
+        namenode = self.get_namenode()
+        if namenode is None:
+            self.logger.error("No namenode running. Aborting.")
+            return None
+
+        datanodes = self.get_datanodes()
+        if datanodes is None:
+            self.logger.error("No datanodes running. Aborting.")
+            return None
+
+        # start namenode processes
+        print "Starting namenode processes..."
+        self._daemon_control(namenode, "hadoop", "jobtracker", "start", ssh_options, as_user=as_user)
+        self._daemon_control(namenode, "hadoop", "secondarynamenode", "start", ssh_options, as_user=as_user)
+        self._daemon_control(namenode, "hadoop", "namenode", "start", ssh_options, as_user=as_user)
+
+        # start processes on data node
+        i = 1
+        for datanode in datanodes:
+            print "Starting datanode #%d processes..." % i
+            self._daemon_control(datanode, "hadoop", "tasktracker", "start", ssh_options, as_user=as_user)
+            self._daemon_control(datanode, "hadoop", "datanode", "start", ssh_options, as_user=as_user)
+            i += 1
+
+    def stop_hbase(self, ssh_options, as_user="hadoop"):
+        namenode = self.get_namenode()
+        if namenode is None:
+            self.logger.error("No namenode running. Aborting.")
+            return None
+
+        datanodes = self.get_datanodes()
+        if datanodes is None:
+            self.logger.error("No datanodes running. Aborting.")
+            return None
+
+        # kill processes on data node
+        i = 1
+        for datanode in datanodes:
+            print "Stopping datanode #%d processes..." % i
+            self._daemon_control(datanode, "hbase", "regionserver", "stop", ssh_options, as_user=as_user)
+            i += 1
+
+        # kill namenode processes
+        print "Stopping namenode processes..."
+        self._daemon_control(namenode, "hbase", "zookeeper", "stop", ssh_options, as_user=as_user)
+        self._daemon_control(namenode, "hbase", "master", "stop", ssh_options, as_user=as_user)
+
+    def start_hbase(self, ssh_options, as_user="hadoop"):
+        namenode = self.get_namenode()
+        if namenode is None:
+            self.logger.error("No namenode running. Aborting.")
+            return None
+
+        datanodes = self.get_datanodes()
+        if datanodes is None:
+            self.logger.error("No datanodes running. Aborting.")
+            return None
+
+        # start namenode processes
+        print "Starting namenode processes..."
+        self._daemon_control(namenode, "hbase", "zookeeper", "start", ssh_options, as_user=as_user)
+        self._daemon_control(namenode, "hbase", "master", "start", ssh_options, as_user=as_user)
+
+        # start processes on data node
+        i = 1
+        for datanode in datanodes:
+            print "Starting datanode #%d processes..." % i
+            self._daemon_control(datanode, "hbase", "regionserver", "start", ssh_options, as_user=as_user)
+            i += 1
+
+    def _wrap_user(self, cmd, as_user):
+        """Wrap a command with the proper sudo incantation to run as as_user"""
+        return 'sudo -i -u %(as_user)s %(cmd)s' % locals()
+
+    def _create_tempfile(self, content):
+        """Create a tempfile, and fill it with content, return the tempfile 
+        object for closing when done."""
+        tmpfile = tempfile.NamedTemporaryFile()
+        tmpfile.write(content)
+        tmpfile.file.flush()
+        return tmpfile
+
+    def start_cloudbase(self, ssh_options, options, as_user="hadoop", ssh_user="root"):
+
+        namenode = self.get_namenode()
+        if not namenode:
+            self.logger.error("No namenode running. Aborting.")
+            return None
+
+        datanodes = self.get_datanodes()
+        if not datanodes:
+            self.logger.error("No datanodes running. Aborting.")
+            return None
+
+        # get list of slaves for the slaves file
+        slaves = "\n".join([dn.public_dns_name for dn in datanodes])
+
+        # fabric configuration
+        env.key_filename = options.get("private_key", "--")
+        if env.key_filename == "--":
+            print("Option private_key not found, unable to start cloudbase")
+            return False
+        env.user = ssh_user
+        env.disable_known_hosts = True
+
+        print("Updating ssh keys and master/slave config files...")
+
+        # start namenode processes
+        env.host_string = namenode.public_dns_name
+
+        # create keypair - but only copy it to the slaves if it's new
+        ssh_dir = "/home/%s/.ssh" % as_user
+        key_filename = "%s/id_rsa" % ssh_dir
+        auth_file = "%s/authorized_keys" % ssh_dir
+        ssh_config = "%s/config" % ssh_dir 
+        ssh_cmd = ("function f() { mkdir -p /home/%(as_user)s/.ssh; "
+            "if [ ! -f %(key_filename)s ]; then "
+            "ssh-keygen -f %(key_filename)s -N '' -q; else return 1; fi; }; "
+            "f" % locals())
+
+        tmpfile = self._create_tempfile(ssh_cmd)
+
+        with settings(hide('warnings', 'running', 'stdout', 'stderr'), warn_only=True):
+
+            # dump ssh_cmd to a temp file
+            temp_file = run(self._wrap_user("mktemp", ssh_user))
+            put(tmpfile.name, temp_file.stdout)
+            run('sudo chmod 755 %(temp_file)s' % locals())
+            fab_output = run(self._wrap_user('%(temp_file)s' % locals(), as_user))
+            sudo("rm %s" % temp_file.stdout)
+
+            if fab_output.return_code:
+                self.logger.debug("Using existing keypair") 
+                copy_keyfile = False
+            else:
+                self.logger.debug("Creating new keypair") 
+                # piping output into tee b/c redirecting in the original sudo
+                # command doesn't work consistently across various configurations
+                run(self._wrap_user("cat %(key_filename)s.pub | sudo -i -u %(as_user)s tee -a %(auth_file)s" % locals(), as_user))
+                run(self._wrap_user("echo StrictHostKeyChecking=no | sudo -i -u %(as_user)s tee -a %(ssh_config)s" % locals(), as_user))
+                copy_keyfile = True
+                keypair = run(self._wrap_user("cat %(key_filename)s" % locals(), as_user))
+                keypair_pub = run(self._wrap_user("cat %(key_filename)s.pub" % locals(), as_user))
+
+                # once everything's inplace, set the owner to as_user
+                sudo("chown -R %(as_user)s:%(as_user)s %(ssh_dir)s" % locals())
+
+        tmpfile.close()
+
+        cb_alive_cmd = "ps aux | grep 'cloudbase\.' | wc -l"
+        fab_output = run(cb_alive_cmd)
+        if fab_output != "0":
+            print("Cloudbase already running on master %s" % env.host_string)
+        else:
+            self.logger.info("Updating the master slaves file (%s)" % slaves)
+            sudo('echo "%s" > /usr/local/cloudbase/conf/slaves' % slaves)
+
+            self.logger.debug("Initializing cloudbase")
+            run(self._wrap_user("/usr/bin/drsi-init-master.sh", as_user))
+ 
+        # start processes on data node
+        for i, datanode in enumerate(datanodes):
+
+            env.host_string = datanode.public_dns_name
+
+            if copy_keyfile:
+                
+                run(self._wrap_user("mkdir -p /home/%s/.ssh" % as_user, as_user))
+
+                temp_keyfile = self._create_tempfile(keypair)
+                put(temp_keyfile.name, key_filename, use_sudo=True)
+                temp_keyfile.close()
+                temp_pubfile = self._create_tempfile(keypair_pub)
+                put(temp_pubfile.name, "%s.pub" % key_filename, use_sudo=True)
+                temp_pubfile.close()
+
+                cmd = ('chmod 600 %(key_filename)s && '
+                    'cat %(key_filename)s.pub >> %(auth_file)s' % locals())
+                sudo(cmd)
+                run(self._wrap_user("echo StrictHostKeyChecking=no | sudo -i -u %(as_user)s tee -a %(ssh_config)s" % locals(), as_user))
+                # once everything's inplace, set the owner to as_user
+                sudo("chown -R %(as_user)s:%(as_user)s %(ssh_dir)s" % locals())
+
+            fab_output = run(cb_alive_cmd)
+            if fab_output != "0":
+                print("Cloudbase already running on datanode %s" % env.host_string)
+            else:
+                self.logger.info("Updating the datanode slaves file (%s)" % slaves)
+                sudo('echo "%s" > /usr/local/cloudbase/conf/slaves' % slaves)
+
+        print "Starting cloudbase..."
+        env.host_string = namenode.public_dns_name
+        run(self._wrap_user("/usr/local/cloudbase/bin/start-all.sh", as_user))
+       
+    def stop_cloudbase(self, options):
+        """Stop cloudbase processes."""
+
+        # just killing the pids associated with cloudbase (vs using stop-all.sh
+        # which actually stops all of the hadoop processes as well)
+        cmd = "ps aux | grep 'cloudbase\.' | awk '{print $2}' | xargs kill"
+        
+        namenode = self.get_namenode()
+        if not namenode:
+            self.logger.error("No namenode running. Aborting.")
+            return None
+
+        datanodes = self.get_datanodes()
+        if not datanodes:
+            self.logger.error("No datanodes running. Aborting.")
+            return None
+       
+        env.key_filename = options.get("private_key", "--")
+        if env.key_filename == "--":
+            print("Option private_key not found, unable to start cloudbase")
+            return False
+        env.user = options.get("ssh_user", "root")
+        env.disable_known_hosts = True
+        env.warn_only = True
+
+        print("Stopping cloudbase on %s datanode%s" % (len(datanodes), 
+            "s" if len(datanodes) > 1 else ""))
+        for datanode in datanodes:
+            env.host_string = datanode.public_dns_name
+            with hide("running", "stdout", "stderr", "warnings"):
+                fab_output = sudo(cmd)
+            if fab_output.return_code == 123:
+                print("  No cloudbase processes on %s" % env.host_string)
+
+        print("Stopping cloudbase on the masternode")
+        env.host_string = namenode.public_dns_name
+        with hide("running", "stdout", "stderr", "warnings"):
+            fab_output = sudo(cmd)
+        if fab_output.return_code == 123:
+            print("  No cloudbase processes on %s" % env.host_string)
+
+    def get_config_files(self, file_paths, options):
+        env.user = "root"
+        env.key_filename = options["private_key"]
+        hadoop_home = self.get_hadoop_home(env.key_filename)
+        conf_path = os.path.join(hadoop_home, "conf")
+
+        print "Downloading %d file(s) from namenode..." % len(file_paths)
+        with settings(host_string=self.get_namenode().public_dns_name):
+            for file_path in file_paths:
+                get(os.path.join(conf_path, file_path))
+        print "Done."
+
+    def send_config_files(self, file_paths, options):
+        hosts = [i.public_dns_name for i in self.get_instances()]
+        if len(hosts) == 0:
+            print "No instances running. Aborting"
+            return None
+
+        env.user = "root"
+        env.key_filename = options["private_key"]
+        hadoop_home = self.get_hadoop_home(env.key_filename)
+        conf_path = os.path.join(hadoop_home, "conf")
+
+        print "Uploading %d file(s) to %d node(s)..." % (len(file_paths), len(hosts))
+
+        for h in hosts:
+            with settings(host_string=h):
+                for file_path in file_paths:
+                    put(file_path, conf_path)
+
+        print "Done. Upload location: %s" % conf_path
+
+    def get_hbase_config_files(self, file_paths, options):
+        env.user = "root"
+        env.key_filename = options["private_key"]
+        hbase_home = self.get_hbase_home(env.key_filename)
+        conf_path = os.path.join(hbase_home, "conf")
+
+        print "Downloading %d file(s) from master..." % len(file_paths)
+        with settings(host_string=self.get_namenode().public_dns_name):
+            for file_path in file_paths:
+                get(os.path.join(conf_path, file_path))
+        print "Done."
+
+    def send_hbase_config_files(self, file_paths, options):
+        hosts = [i.public_dns_name for i in self.get_instances()]
+        if len(hosts) == 0:
+            print "No instances running. Aborting"
+            return None
+
+        env.user = "root"
+        env.key_filename = options["private_key"]
+        hbase_home = self.get_hbase_home(env.key_filename)
+        conf_path = os.path.join(hbase_home, "conf")
+
+        print "Uploading %d file(s) to %d node(s)..." % (len(file_paths), len(hosts))
+
+        for h in hosts:
+            with settings(host_string=h):
+                for file_path in file_paths:
+                    put(file_path, conf_path)
+
+        print "Done. Upload location: %s" % conf_path

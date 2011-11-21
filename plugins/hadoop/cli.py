@@ -1,4 +1,5 @@
 import sys
+import os
 import logging
 import urllib
 
@@ -16,6 +17,29 @@ where COMMAND and [OPTIONS] may be one of:
   ----------------------------------------------------------------------------------
   launch-master                       launch or find a master in CLUSTER
   launch-slaves NUM_SLAVES            launch NUM_SLAVES slaves in CLUSTER
+  terminate-dead-nodes                find and terminate dead nodes in CLUSTER
+  start-hadoop                        starts all processes on namenode and datanodes
+  stop-hadoop                         stops all processes on namenode and datanodes
+  send-config-files                   sends the given config files to each node and
+                                        overwrites the existing file in the hadoop
+                                        conf directory (BE CAREFUL!)
+  get-config-files                    gets the given config files from the namenode
+                                        and stores them in the cwd 
+
+                               HBASE COMMANDS
+  ----------------------------------------------------------------------------------
+  start-hbase                         starts processes on namenode and datanodes
+  stop-hbase                          stops processes on namenode and datanodes
+  send-hbase-config-files             sends the given config files to each node and
+                                        overwrites the existing file in the hadoop
+                                        conf directory (BE CAREFUL!)
+  get-hbase-config-files              gets the given config files from the namenode
+                                        and stores them in the cwd 
+
+                             CLOUDBASE COMMANDS
+  ----------------------------------------------------------------------------------
+  start-cloudbase                     starts processes on namenode and datanodes
+  stop-cloudbase                      stops proceses on namenode and datanodes
 
                                CLUSTER COMMANDS
   ----------------------------------------------------------------------------------
@@ -61,8 +85,41 @@ where COMMAND and [OPTIONS] may be one of:
         elif self._command_name == "terminate-cluster":
             self.terminate_cluster(argv, options_dict)
 
-        elif self._command_name == "launch-cluster":
+        elif self._command_name == "launch-cluster":        
             self.launch_cluster(argv, options_dict)
+
+        elif self._command_name == "terminate-dead-nodes":
+            self.terminate_dead_nodes(argv, options_dict)
+
+        elif self._command_name == "launch-master":
+            self.launch_master(argv, options_dict)
+
+        elif self._command_name == "launch-slaves":
+            self.launch_slaves(argv, options_dict)
+
+        elif self._command_name == "start-hadoop":
+            self.start_hadoop(argv, options_dict)
+
+        elif self._command_name == "stop-hadoop":
+            self.stop_hadoop(argv, options_dict)
+
+        elif self._command_name == "start-hbase":
+            self.start_hbase(argv, options_dict)
+
+        elif self._command_name == "stop-hbase":
+            self.stop_hbase(argv, options_dict)
+
+        elif self._command_name == "send-config-files":
+            self.send_config_files(argv, options_dict)
+
+        elif self._command_name == "get-config-files":
+            self.get_config_files(argv, options_dict)
+
+        elif self._command_name == "send-hbase-config-files":
+            self.send_hbase_config_files(argv, options_dict)
+
+        elif self._command_name == "get-hbase-config-files":
+            self.get_hbase_config_files(argv, options_dict)
 
         elif self._command_name == "login":
             self.login(argv, options_dict)
@@ -82,15 +139,12 @@ where COMMAND and [OPTIONS] may be one of:
         elif self._command_name == "list-storage":
             self.print_storage()
 
-        elif self._command_name == "stop-cassandra":
-            self.stop_cassandra(argv, options_dict)
+        elif self._command_name == "start-cloudbase":
+            self.start_cloudbase(argv, options_dict)
 
-        elif self._command_name == "start-cassandra":
-            self.start_cassandra(argv, options_dict)
-
-        elif self._command_name == "print-ring":
-            self.print_ring(argv, options_dict)
-
+        elif self._command_name == "stop-cloudbase":
+            self.stop_cloudbase(argv, options_dict)
+            
         else:
             self.print_help()
 
@@ -104,8 +158,12 @@ where COMMAND and [OPTIONS] may be one of:
                                        expected_arguments=expected_arguments)
         opt.update(options_dict)
 
+        # if PROVIDER is set in the environment that takes precedence over
+        # anything in the clusters.cfg; hbase is the default if nothing is set
+        provider = os.environ.get("PROVIDER", opt.get("provider", "hbase")).lower()
+
         number_of_slaves = int(args[0])
-        instance_templates = [
+        master_templates = [
             InstanceTemplate(
                 (
                     self.service.NAMENODE, 
@@ -122,7 +180,27 @@ where COMMAND and [OPTIONS] may be one of:
                 opt.get('user_packages'),
                 opt.get('auto_shutdown'), 
                 opt.get('env'),
-                opt.get('security_groups')),
+                opt.get('security_groups'))
+        ]
+        for it in master_templates:
+            it.add_env_strings([
+                "CLUSTER_SIZE=%d" % (number_of_slaves+1),
+                "PROVIDER=%s" % (provider)
+            ])
+
+        print "Using %s as the backend datastore" % (provider)
+
+        print "Launching cluster with %d instance(s) - starting master...please wait." % (number_of_slaves+1)
+        
+        master = self.service.launch_cluster(master_templates, opt.get('client_cidr'), opt.get('config_dir'))
+
+        if master is None:
+            print "An error occurred starting the master node. Check the logs for more information."
+            sys.exit(1)
+
+        print "Master now running at %s - starting slaves" % master.public_dns_name
+
+        slave_templates = [
             InstanceTemplate(
                 (
                     self.service.DATANODE, 
@@ -141,12 +219,75 @@ where COMMAND and [OPTIONS] may be one of:
                 opt.get('security_groups'))
         ]
 
-        for it in instance_templates:
+        for it in slave_templates:
             it.add_env_strings([
-                "CLUSTER_SIZE=%d" % (number_of_slaves+1)
+                "CLUSTER_SIZE=%d" % (number_of_slaves+1),
+                "NN_HOST=%s" % master.public_dns_name,
+                "JT_HOST=%s" % master.public_dns_name,
+                "ZOOKEEPER_QUORUM=%s" % master.private_dns_name,
+                "PROVIDER=%s" % (provider)
             ])
 
-        print "Launching cluster with %d instance(s)...please wait." % (number_of_slaves+1)
+        print "Launching %d slave instance(s)...please wait." % (number_of_slaves)
+        slave = self.service.launch_cluster(slave_templates, opt.get('client_cidr'), opt.get('config_dir'))        
+        
+        if slave is None:
+            print "An error occurred starting the slave nodes.  Check the logs for more details"
+            sys.exit(1)
+            
+        #Once the cluster is up, if the provider is Cloudbase, we need to ensure that Cloudbase has been initialized
+        #and launch the servers
+        if provider == "cloudbase":
+
+            #log in to the master and run a startup script
+            print "Provider is cloudbase - starting cloudbase processes ... please wait"
+            self.service.start_cloudbase(options_dict.get("ssh_options"),
+                options_dict,
+                options_dict.get("hadoop_user", "hadoop"),
+                options_dict.get("ssh_user", "root"))
+            
+        print "Finished - browse the cluster at http://%s/" % master.public_dns_name
+ 
+        self.logger.debug("Startup complete.")
+
+    def launch_master(self, argv, options_dict):
+        """Launch the master node of a CLUSTER."""
+
+        opt, args = self.parse_options(self._command_name, argv, BASIC_OPTIONS)
+        opt.update(options_dict)
+        
+        provider = opt.get("provider")
+        if provider is None:
+            provider = "hbase"
+        else:
+            provider.lower()
+
+        instance_templates = [
+            InstanceTemplate(
+                (
+                    self.service.NAMENODE, 
+                    self.service.SECONDARY_NAMENODE, 
+                    self.service.JOBTRACKER
+                ),
+                1,
+                opt.get('image_id'),
+                opt.get('instance_type'), 
+                opt.get('key_name'),
+                opt.get('public_key'), 
+                opt.get('user_data_file'),
+                opt.get('availability_zone'), 
+                opt.get('user_packages'),
+                opt.get('auto_shutdown'), 
+                opt.get('env'),
+                opt.get('security_groups')),
+            ]
+
+        for it in master_templates:
+            it.add_env_strings([
+                "PROVIDER=%s" % (provider)
+            ])
+
+        print "Launching cluster master...please wait." 
         jobtracker = self.service.launch_cluster(instance_templates, 
                                                  opt.get('client_cidr'),
                                                  opt.get('config_dir'))
@@ -157,6 +298,226 @@ where COMMAND and [OPTIONS] may be one of:
 
         print "Browse the cluster at http://%s/" % jobtracker.public_dns_name
         self.logger.debug("Startup complete.")
+
+    def launch_slaves(self, argv, options_dict):
+        """Launch slave/datanodes in CLUSTER."""
+
+        expected_arguments = ["NUM_SLAVES"]
+        opt, args = self.parse_options(self._command_name,
+                                       argv,
+                                       expected_arguments=expected_arguments)
+        opt.update(options_dict)
+
+        provider = opt.get("provider")
+        if provider is None:
+            provider = "hbase"
+        else:
+            provider.lower()
+
+        try:
+            number_of_slaves = int(args[0])
+        except ValueError:
+            print("Number of slaves must be an integer")
+            return
+
+        instance_templates = [
+            InstanceTemplate(
+                (
+                    self.service.DATANODE, 
+                    self.service.TASKTRACKER
+                ), 
+                number_of_slaves,
+                opt.get('image_id'),
+                opt.get('instance_type'),
+                opt.get('key_name'),
+                opt.get('public_key'),
+                opt.get('user_data_file'),
+                opt.get('availability_zone'),
+                opt.get('user_packages'),
+                opt.get('auto_shutdown'),
+                opt.get('env'),
+                opt.get('security_groups')),
+            ]
+
+        # @todo - this is originally passed in when creating a cluster from
+        # scratch, need to figure out what to do if we're growing a cluster
+        #instance_template.add_env_strings([
+        #    "CLUSTER_SIZE=%d" % (number_of_slaves+1)
+        #])
+
+        print("Launching %s slave%s for %s" % (number_of_slaves, 
+            "" if number_of_slaves==1 else "s", self._cluster_name))
+
+        # this is needed to filter the jobtracker/namenode down into
+        # hadoop-site.xml for the new nodes
+        namenode = self.service.get_namenode()
+        jobtracker = self.service.get_jobtracker()
+        for instance_template in instance_templates:
+            instance_template.add_env_strings([
+                "NN_HOST=%s" % namenode.public_dns_name,
+                "JT_HOST=%s" % jobtracker.public_dns_name,
+                "ZOOKEEPER_QUORUM=%s" % namenode.private_dns_name,
+                "PROVIDER=%s" % (provider)
+            ])
+
+        # I think this count can be wrong if run too soon after running
+        # terminate_dead_nodes
+        existing_tasktrackers = self.service.get_tasktrackers()
+        num_tasktrackers = len(existing_tasktrackers) if existing_tasktrackers else 0
+        self.service.launch_cluster(instance_templates, 
+            opt.get('client_cidr'), opt.get('config_dir'),
+            num_existing_tasktrackers=num_tasktrackers)
+
+    def start_cloudbase(self, argv, options_dict):
+        """Start the various cloudbase processes on the namenode and slave nodes - initialize the cloudbase instance, if necessary"""
+        
+        opt, args = self.parse_options(self._command_name, argv, BASIC_OPTIONS)
+        opt.update(options_dict)
+
+        self.service.start_cloudbase(options_dict.get("ssh_options"),
+            options_dict, 
+            options_dict.get("hadoop_user", "hadoop"), 
+            options_dict.get("ssh_user", "root"))
+
+    def stop_cloudbase(self, argv, options_dict):
+        """Stop the various cloudbase processes on the namenode and slave
+        nodes"""
+        
+        opt, args = self.parse_options(self._command_name, argv, BASIC_OPTIONS)
+        opt.update(options_dict)
+
+        self.service.stop_cloudbase(options_dict)
+    
+    def start_hadoop(self, argv, options_dict):
+        """Start the various processes on the namenode and slave nodes"""
+
+        opt, args = self.parse_options(self._command_name, argv, BASIC_OPTIONS)
+        opt.update(options_dict)
+
+        print "Starting hadoop..."
+        self.service.start_hadoop(options_dict.get("ssh_options"),
+                                  options_dict.get("hadoop_user", "hadoop"))
+
+    def stop_hadoop(self, argv, options_dict):
+        """Stop the various processes on the namenode and slave nodes"""
+
+        x = "n"
+        while True:
+            try:
+                x = raw_input("Are you sure you want to stop Hadoop? (Y/n) ").lower()
+                if x in ["y", "n"]:
+                    break
+                print "Value must be either y or n. Try again."
+            except KeyboardInterrupt:
+                x = "n"
+                print ""
+                break
+        
+        if x == "n":
+            print "Quitting"
+            sys.exit(1)
+
+        opt, args = self.parse_options(self._command_name, argv, BASIC_OPTIONS)
+        opt.update(options_dict)
+
+        print "Stopping hadoop..."
+        self.service.stop_hadoop(options_dict.get("ssh_options"),
+                                 options_dict.get("hadoop_user", "hadoop"))
+
+    def start_hbase(self, argv, options_dict):
+        """Start the various hbase processes on the namenode and slave nodes"""
+
+        opt, args = self.parse_options(self._command_name, argv, BASIC_OPTIONS)
+        opt.update(options_dict)
+
+        print "Starting hbase..."
+        self.service.start_hbase(options_dict.get("ssh_options"),
+                                  options_dict.get("hadoop_user", "hadoop"))
+
+    def stop_hbase(self, argv, options_dict):
+        """Stop the various hbase processes on the namenode and slave nodes"""
+
+        x = "n"
+        while True:
+            try:
+                x = raw_input("Are you sure you want to stop HBase? (Y/n) ").lower()
+                if x in ["y", "n"]:
+                    break
+                print "Value must be either y or n. Try again."
+            except KeyboardInterrupt:
+                x = "n"
+                print ""
+                break
+        
+        if x == "n":
+            print "Quitting"
+            sys.exit(1)
+
+        opt, args = self.parse_options(self._command_name, argv, BASIC_OPTIONS)
+        opt.update(options_dict)
+
+        print "Stopping hbase..."
+        self.service.stop_hbase(options_dict.get("ssh_options"),
+                                 options_dict.get("hadoop_user", "hadoop"))
+
+    def get_config_files(self, argv, options_dict):
+        """
+        Gets the given config files from the name node and writes them
+        to the local directory.
+        """
+
+        opt, args = self.parse_options(self._command_name, argv, expected_arguments=["FILE*"], unbounded_args=True)
+        opt.update(options_dict)
+
+        self.service.get_config_files(args, options_dict)
+
+    def send_config_files(self, argv, options_dict):
+        """
+        Sends the given config file to each node in the cluster, overwriting
+        the file located in hadoop/conf directory.
+        """
+
+        opt, args = self.parse_options(self._command_name, argv, expected_arguments=["FILE*"], unbounded_args=True)
+        opt.update(options_dict)
+
+        self.service.send_config_files(args, options_dict)
+
+    def get_hbase_config_files(self, argv, options_dict):
+        """
+        Gets the given config files from the hbase master node and 
+        writes them to the local directory.
+        """
+
+        opt, args = self.parse_options(self._command_name, argv, expected_arguments=["FILE*"], unbounded_args=True)
+        opt.update(options_dict)
+
+        self.service.get_hbase_config_files(args, options_dict)
+
+    def send_hbase_config_files(self, argv, options_dict):
+        """
+        Sends the given config file to each node in the cluster, overwriting
+        the file located in hadoop/conf directory.
+        """
+
+        opt, args = self.parse_options(self._command_name, argv, expected_arguments=["FILE*"], unbounded_args=True)
+        opt.update(options_dict)
+
+        self.service.send_hbase_config_files(args, options_dict)
+
+    def terminate_dead_nodes(self, argv, options_dict):
+        """Find and terminate dead nodes in CLUSTER."""
+
+        opt, args = self.parse_options(self._command_name, argv, BASIC_OPTIONS)
+        opt.update(options_dict)
+
+        print("Looking for dead nodes in %s" % self._cluster_name)
+        dead_nodes = self.service.find_dead_nodes(self._cluster_name, opt)
+        if not dead_nodes:
+            print("No dead nodes found")
+            return 
+
+        print ("Found %s dead nodes" % len(dead_nodes))
+        self.service.terminate_nodes(dead_nodes, opt)
 
     def create_storage(self, argv, options_dict):
         opt, args = self.parse_options(self._command_name, argv, BASIC_OPTIONS,
