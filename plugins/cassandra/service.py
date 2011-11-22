@@ -426,8 +426,8 @@ class CassandraService(ServicePlugin):
             ring_output = check_output(ssh_command, shell=True, stderr=subprocess.STDOUT)
             for node in ring_output.splitlines()[3:]:
                 nodesplit = node.split()
-                self.logger.debug("Node %s is %s and %s" % (nodesplit[0], nodesplit[1], nodesplit[2]))
-                if nodesplit[1].lower() != "up" and nodesplit[2].lower() != "normal":
+                self.logger.debug("Node %s is %s and %s" % (nodesplit[0], nodesplit[3], nodesplit[4]))
+                if nodesplit[3].lower() != "up" and nodesplit[4].lower() != "normal":
                     self.logger.debug("Node %s ring is not healthy" % nodesplit[0])
                     retcode = 200
         except subprocess.CalledProcessError, e:
