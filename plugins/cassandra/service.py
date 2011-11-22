@@ -269,7 +269,7 @@ class CassandraService(ServicePlugin):
             os.unlink(temp_file)
             os.unlink(downloaded_file)
             
-    def _modify_config_file(self, instance, config_file, seed_ips, token, set_tokens=True):
+    def _modify_config_file(self, instance, config_file, seed_ips, token, set_tokens=True, auto_bootstrap=False):
         # YAML (0.7.x+)
         if config_file.endswith(".yaml"):
             remote_file = "cassandra.yaml"
