@@ -4,6 +4,7 @@ import time
 import subprocess
 import urllib
 import tempfile
+import socket
 
 from cloud.cluster import TimeoutException
 from cloud.service import InstanceTemplate
@@ -237,93 +238,58 @@ class CassandraService(ServicePlugin):
             self.logger.debug("Sleeping for %d seconds..." % wait_time)
             time.sleep(wait_time)
 
-    def _modify_config_file(self, instance, config_file, seed_ips, token, set_tokens=True, auto_bootstrap=False):
-        # XML (0.6.x) 
-        if config_file.endswith(".xml"):
-            remote_file = "storage-conf.xml"
+    def hack_config_for_multi_region(self, ssh_options, seeds):
+        instances = self.get_instances()
+        downloaded_file = "cassandra.yaml.downloaded"
+        for instance in instances:
 
-            xml = parse_xml(urllib.urlopen(config_file)).getroot()
+            # download config file
+            print "downloading config from %s" % instance.public_dns_name
+            scp_command = 'scp %s root@%s:/usr/local/apache-cassandra/conf/cassandra.yaml %s' % (xstr(ssh_options), instance.public_dns_name, downloaded_file)
+            subprocess.call(scp_command, shell=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
 
-            #  Seeds
-            seeds = xml.find("Seeds")
-            if seeds is not None:
-                while seeds.getchildren():
-                    seeds.remove(seeds.getchildren()[0])
-            else:
-                seeds = Element("Seeds")
-                xml.append(seeds)
-
-            for seed_ip in seed_ips:
-                seed = Element("Seed")
-                seed.text = seed_ip
-                seeds.append(seed)
-
-            # Initial token
-            if set_tokens is True :
-                initial_token = xml.find("InitialToken")
-                if initial_token is None:
-                    initial_token = Element("InitialToken")
-                    xml.append(initial_token)
-                initial_token.text = token
-
-            # Logs
-            commit_log_directory = xml.find("CommitLogDirectory")
-            if commit_log_directory is None:
-                commit_log_directory = Element("CommitLogDirectory")
-                xml.append(commit_log_directory)
-            commit_log_directory.text = "/mnt/cassandra-logs"
-
-            # Data 
-            data_file_directories = xml.find("DataFileDirectories")
-            if data_file_directories is not None:
-                while data_file_directories.getchildren():
-                    data_file_directories.remove(data_file_directories.getchildren()[0])
-            else:
-                data_file_directories = Element("DataFileDirectories")
-                xml.append(data_file_directories)
-            data_file_directory = Element("DataFileDirectory")
-            data_file_directory.text = "/mnt/cassandra-data"
-            data_file_directories.append(data_file_directory)
-
-
-            # listen address
-            listen_address = xml.find("ListenAddress")
-            if listen_address is None:
-                listen_address = Element("ListenAddress")
-                xml.append(listen_address)
-            listen_address.text = ""
-
-            # thrift address
-            thrift_address = xml.find("ThriftAddress")
-            if thrift_address is None:
-                thrift_address = Element("ThriftAddress")
-                xml.append(thrift_address)
-            thrift_address.text = ""
-
-            fd, temp_file = tempfile.mkstemp(prefix='storage-conf.xml_', text=True)
-            os.write(fd, dump_xml(xml))
-            os.close(fd)
+            print "modifying config from %s" % instance.public_dns_name
+            yaml = parse_yaml(urllib.urlopen(downloaded_file))
+            yaml['seed_provider'][0]['parameters'][0]['seeds'] = seeds
+            yaml['listen_address'] = str(instance.public_dns_name)
+            yaml['rpc_address'] = str(instance.public_dns_name)
+            yaml['broadcast_address'] = socket.gethostbyname(str(instance.public_dns_name))
+            yaml['endpoint_snitch'] = 'org.apache.cassandra.locator.Ec2MultiRegionSnitch'
             
-        # YAML (0.7.x)
-        elif config_file.endswith(".yaml"):
+            print "saving config from %s" % instance.public_dns_name
+            fd, temp_file = tempfile.mkstemp(prefix='cassandra.yaml_', text=True)
+            os.write(fd, dump_yaml(yaml))
+            os.close(fd)
+
+            #upload config file
+            print "uploading new config to %s" % instance.public_dns_name
+            scp_command = 'scp %s %s root@%s:/usr/local/apache-cassandra/conf/cassandra.yaml' % (xstr(ssh_options), temp_file, instance.public_dns_name)
+            subprocess.check_call(scp_command, shell=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+
+            os.unlink(temp_file)
+            os.unlink(downloaded_file)
+            
+    def _modify_config_file(self, instance, config_file, seed_ips, token, set_tokens=True, auto_bootstrap=False):
+        # YAML (0.7.x+)
+        if config_file.endswith(".yaml"):
             remote_file = "cassandra.yaml"
 
             yaml = parse_yaml(urllib.urlopen(config_file))
-            yaml['seeds'] = seed_ips
+            yaml['seed_provider'][0]['parameters'][0]['seeds'] = ",".join(seed_ips)
             if set_tokens is True :
                 yaml['initial_token'] = token
             if auto_bootstrap :
                 yaml['auto_bootstrap'] = 'true'
             yaml['data_file_directories'] = ['/mnt/cassandra-data']
             yaml['commitlog_directory'] = '/mnt/cassandra-logs'
-            yaml['listen_address'] = str(instance.private_dns_name)
+            yaml['listen_address'] = str(instance.public_dns_name)
             yaml['rpc_address'] = str(instance.public_dns_name)
-
+            
             fd, temp_file = tempfile.mkstemp(prefix='cassandra.yaml_', text=True)
             os.write(fd, dump_yaml(yaml))
             os.close(fd)
         else:
-            raise Exception("Configuration file must be one of xml or yaml") 
+            raise Exception("Configuration file must be yaml (implies Cassandra 0.7.x or greater)") 
 
         return temp_file, remote_file
     
@@ -428,12 +394,12 @@ class CassandraService(ServicePlugin):
                 print "Removing node %s." % node['token']
                 self._run_nodetool(ssh_options, 'removetoken %s' % node['token'], instance)
 
-    def rebalance(self, ssh_options):
+    def rebalance(self, ssh_options, offset=0):
         instances = self.get_instances()
         tokens = self._get_evenly_spaced_tokens_for_n_instances(len(instances))
         self.logger.info("new token space: %s" % str(tokens))
-        for i in range(len(instances)) :
-            token = tokens[i]
+        for i in range(len(instances)):
+            token = str(int(tokens[i]) + offset)
             instance = instances[i]
             self.logger.info("Moving instance %s to token %s" % (instance.id, token))
             retcode = self._run_nodetool(ssh_options, "move %s" % token, instance=instance)
