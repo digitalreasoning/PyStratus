@@ -26,6 +26,7 @@ from cloud.storage import Storage
 from cloud.exception import VolumesStillInUseException
 from cloud.util import xstr
 from cloud.util import get_ec2_connection
+from cloud.util import log_cluster_action
 from prettytable import PrettyTable
 import logging
 import os
@@ -324,6 +325,8 @@ class Ec2Cluster(Cluster):
   def terminate(self):
     instances = self._get_instances(self._get_cluster_group_name(), "running")
     if instances:
+      log_cluster_action(self.config_dir, self._get_cluster_group_name(), 
+        "terminate-cluster", len(instances))
       self.ec2Connection.terminate_instances([i.id for i in instances])
 
   def delete(self):

@@ -5,6 +5,7 @@ import urllib
 from cloud.plugin import CLIPlugin
 from cloud.plugin import BASIC_OPTIONS
 from cloud.service import InstanceTemplate
+from cloud.util import log_cluster_action
 from optparse import make_option
 from prettytable import PrettyTable
 from pprint import pprint
@@ -253,6 +254,11 @@ where COMMAND and [OPTIONS] may be one of:
                                     opt.get('ssh_options'),
                                     opt.get('cassandra_config_file'),
                                     opt.get('keyspace_definitions_file')) 
+
+
+        log_cluster_action(opt.get('config_dir'), self._cluster_name,
+            "launch-cluster", number_of_nodes, opt.get("instance_type"),
+            None, "cassandra")
 
     def stop_cassandra(self, argv, options_dict):
         instances = self.service.get_instances()

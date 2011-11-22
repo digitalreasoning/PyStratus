@@ -17,6 +17,9 @@
 Utility functions.
 """
 
+import os
+import csv
+import time
 import ConfigParser
 import socket
 from subprocess import Popen, PIPE, CalledProcessError
@@ -139,4 +142,12 @@ def check_output(*popenargs, **kwargs):
       raise CalledProcessError(retcode, cmd)
   return output
 
+def log_cluster_action(config_dir, cluster_name, command, number,
+instance_type=None, provider=None, plugin=None):
+    """Log details of cluster launching or termination to a csv file.
+    """
 
+    csv_file = open(os.path.join(config_dir, "launch_log.csv"), "a+b")
+    csv_log = csv.writer(csv_file)
+    csv_log.writerow([cluster_name, command, number, instance_type, provider, plugin, time.strftime("%Y-%m-%d %H:%M:%S %Z")])
+    csv_file.close()

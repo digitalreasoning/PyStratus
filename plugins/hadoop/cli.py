@@ -6,6 +6,7 @@ import urllib
 from cloud.plugin import CLIPlugin
 from cloud.plugin import BASIC_OPTIONS
 from cloud.service import InstanceTemplate
+from cloud.util import log_cluster_action
 from optparse import make_option
 from prettytable import PrettyTable
 
@@ -198,6 +199,10 @@ where COMMAND and [OPTIONS] may be one of:
             print "An error occurred starting the master node. Check the logs for more information."
             sys.exit(1)
 
+        log_cluster_action(opt.get('config_dir'), self._cluster_name,
+            "launch-cluster", 1, opt.get("instance_type"),
+            provider, "hadoop")
+
         print "Master now running at %s - starting slaves" % master.public_dns_name
 
         slave_templates = [
@@ -235,6 +240,10 @@ where COMMAND and [OPTIONS] may be one of:
             print "An error occurred starting the slave nodes.  Check the logs for more details"
             sys.exit(1)
             
+        log_cluster_action(opt.get('config_dir'), self._cluster_name,
+            "launch-cluster", number_of_slaves, opt.get("instance_type"),
+            provider, "hadoop")
+
         #Once the cluster is up, if the provider is Cloudbase, we need to ensure that Cloudbase has been initialized
         #and launch the servers
         if provider == "cloudbase":
