@@ -22,10 +22,14 @@ import csv
 import time
 import ConfigParser
 import socket
-from subprocess import Popen, PIPE, CalledProcessError
 import urllib2
+import paramiko
 
+from subprocess import Popen, PIPE, CalledProcessError
 from boto.ec2 import regions as EC2Regions
+from fabric.api import *
+
+FULL_HIDE = hide("running", "stdout", "stderr", "warnings")
 
 def get_ec2_connection(regionName):
     for region in EC2Regions():
@@ -151,3 +155,27 @@ instance_type=None, provider=None, plugin=None):
     csv_log = csv.writer(csv_file)
     csv_log.writerow([cluster_name, command, number, instance_type, provider, plugin, time.strftime("%Y-%m-%d %H:%M:%S %Z")])
     csv_file.close()
+
+def ssh_available(user, private_key, host, port=22, timeout=10):
+    client = paramiko.SSHClient()
+
+    # Load known host keys (e.g. ~/.ssh/known_hosts) unless user says not to.
+    if not env.disable_known_hosts:
+        client.load_system_host_keys()
+    # Unless user specified not to, accept/add new, unknown host keys
+    if not env.reject_unknown_hosts:
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+    try:
+        client.connect(
+            hostname=host,
+            port=port,
+            username=user,
+            key_filename=private_key,
+            timeout=timeout,
+            allow_agent=not env.no_agent,
+            look_for_keys=not env.no_keys
+        )
+        return True
+    except Exception, e:
+        return False

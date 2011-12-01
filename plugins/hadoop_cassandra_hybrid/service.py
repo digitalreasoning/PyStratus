@@ -146,10 +146,6 @@ class HadoopCassandraService(ServicePlugin):
 
         return self._get_jobtracker()
 
-    def login(self, instance, ssh_options):
-        ssh_command = self._get_standard_ssh_command(instance, ssh_options)
-        subprocess.call(ssh_command, shell=True)
-
     def _sanitize_role_name(self, role):
         """
         Replace characters in role name with ones allowed in bash variable names
@@ -311,7 +307,7 @@ class HadoopCassandraService(ServicePlugin):
         
         options = '-o "ConnectTimeout 10" -o "ServerAliveInterval 60" ' \
                   '-N -D 6666'
-        process = subprocess.Popen('ssh %s %s root@%s' % (
+        process = subprocess.Popen('ssh %s %s %s' % (
                 xstr(ssh_options), 
                 options, 
                 namenode.public_dns_name
@@ -366,7 +362,7 @@ class HadoopCassandraService(ServicePlugin):
             local_file, remote_file = self._modify_config_file(instances[i], config_file, seed_ips, str(tokens[i]))
 
             # Upload modified config file
-            scp_command = 'scp %s -r %s root@%s:/usr/local/apache-cassandra/conf/%s' % (xstr(ssh_options),
+            scp_command = 'scp %s -r %s %s:/usr/local/apache-cassandra/conf/%s' % (xstr(ssh_options),
                                                      local_file, instances[i].public_dns_name, remote_file)
             subprocess.call(scp_command, shell=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
 
@@ -382,7 +378,7 @@ class HadoopCassandraService(ServicePlugin):
             self.logger.debug("Copying keyspace definition file to first Cassandra instance...")
 
             # Upload keyspace definitions file
-            scp_command = 'scp %s -r %s root@%s:/usr/local/apache-cassandra/conf/keyspaces.txt' % \
+            scp_command = 'scp %s -r %s %s:/usr/local/apache-cassandra/conf/keyspaces.txt' % \
                           (xstr(ssh_options), temp_keyspace_file, instances[0].public_dns_name)
             subprocess.call(scp_command, shell=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
 

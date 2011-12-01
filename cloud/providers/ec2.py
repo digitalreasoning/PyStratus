@@ -27,9 +27,14 @@ from cloud.exception import VolumesStillInUseException
 from cloud.util import xstr
 from cloud.util import get_ec2_connection
 from cloud.util import log_cluster_action
+from cloud.util import FULL_HIDE
+from cloud.util import ssh_available
+from cloud.decorators import timeout
 from prettytable import PrettyTable
+from fabric.api import *
 import logging
 import os
+import paramiko
 import re
 import subprocess
 import sys
@@ -40,9 +45,9 @@ logger = logging.getLogger(__name__)
 CLOUD_PROVIDER = ("ec2", ('cloud.providers.ec2', 'Ec2Cluster'))
 
 def _run_command_on_instance(instance, ssh_options, command):
-  print "Running ssh %s root@%s '%s'" % \
+  print "Running ssh %s %s '%s'" % \
     (ssh_options, instance.public_dns_name, command)
-  retcode = subprocess.call("ssh %s root@%s '%s'" %
+  retcode = subprocess.call("ssh %s %s '%s'" %
                            (ssh_options, instance.public_dns_name, command),
                            shell=True)
   print "Command running on %s returned with value %s" % \
@@ -294,12 +299,10 @@ class Ec2Cluster(Cluster):
       instance_type=size_id, placement=kwargs.get('placement', None))
     return [instance.id for instance in reservation.instances]
 
-  def wait_for_instances(self, instance_ids, timeout=600, fail_on_terminated=True):
+  @timeout(600)
+  def wait_for_instances(self, instance_ids, fail_on_terminated=True):
     wait_time = 3
-    start_time = time.time()
     while True:
-      if (time.time() - start_time >= timeout):
-        raise TimeoutException()
       try:
         if self._all_started(self.ec2Connection.get_all_instances(instance_ids), fail_on_terminated):
           break
@@ -308,18 +311,22 @@ class Ec2Cluster(Cluster):
         pass
       logging.info("Sleeping for %d seconds..." % wait_time)
       time.sleep(wait_time)
-
+    
   def _all_started(self, reservations, fail_on_terminated=True):
     for res in reservations:
       for instance in res.instances:
-        logging.info("Instance %s state = %s" % (instance, instance.state))
-
         # check for terminated
         if fail_on_terminated and instance.state == "terminated":
             raise InstanceTerminatedException(instance.state_reason['message'])
 
         if instance.state != "running":
+          logging.info("Instance %s state = %s" % (instance, instance.state))
           return False
+
+        if not ssh_available(env.user, env.key_filename, instance.public_dns_name):
+            logging.info("SSH unavailable...")
+            return False
+
     return True
 
   def terminate(self):

@@ -108,7 +108,7 @@ class HadoopService(ServicePlugin):
 
         self.logger.debug("Instances started: %s" % (str(instances),))
 
-        self._create_client_hadoop_site_file(config_dir)
+        #self._create_client_hadoop_site_file(config_dir)
         self._authorize_client_ports(client_cidr)
         self._attach_storage(roles)
         try:
@@ -196,10 +196,6 @@ class HadoopService(ServicePlugin):
 
         return dead_nodes
         
-    def login(self, instance, ssh_options):
-        ssh_command = self._get_standard_ssh_command(instance, ssh_options)
-        subprocess.call(ssh_command, shell=True)
-
     def _sanitize_role_name(self, role):
         """
         Replace characters in role name with ones allowed in bash variable names
@@ -402,7 +398,7 @@ class HadoopService(ServicePlugin):
         
         options = '-o "ConnectTimeout 10" -o "ServerAliveInterval 60" ' \
                   '-N -D 6666'
-        process = subprocess.Popen('ssh %s %s root@%s' % (
+        process = subprocess.Popen('ssh %s %s %s' % (
                 xstr(ssh_options), 
                 options, 
                 namenode.public_dns_name
@@ -698,7 +694,7 @@ class HadoopService(ServicePlugin):
             print "No instances running. Aborting"
             return None
 
-        env.user = "root"
+        env.user = options.get("ssh_user")
         env.key_filename = options["private_key"]
         hadoop_home = self.get_hadoop_home(env.key_filename)
         conf_path = os.path.join(hadoop_home, "conf")

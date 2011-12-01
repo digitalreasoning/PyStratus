@@ -40,6 +40,8 @@ from yapsy.PluginManager import PluginManager
 from cloud import VERSION
 from cloud.settings import SERVICE_PROVIDER_MAP
 
+from fabric.api import *
+
 DEFAULT_CLOUD_PROVIDER = 'ec2'
 DEFAULT_REGION = 'us-east-1'
 DEFAULT_CONFIG_DIR = os.path.join(os.environ['HOME'], ".stratus")
@@ -98,14 +100,19 @@ SNAPSHOT_OPTIONS = BASIC_OPTIONS[:] + [
     help="The key pair to use when launching instances."),
   make_option("-p", "--private-key", metavar="PRIVATE-KEY",
     help="The private key for SSH commands."),
-  make_option("--ssh-options", metavar="SSH-OPTIONS",
-    help="SSH options to use."),
+  make_option("--ssh-user", metavar="SSH-USER",
+    help="SSH user to use."),
 ]
 
 DELETE_SECURITY_GROUPS_OPTIONS = BASIC_OPTIONS[:] + [
   make_option("--force", action="store_true", default=False,
     help="Force the deletion without confirmation. BE CAREFUL!")
 ]
+
+REQUIRED_FIELDS = (
+    'private_key', 
+    'ssh_user',
+)
 
 # load the service plugin based on the service type
 plugin_manager = None
@@ -161,9 +168,23 @@ def parse_options_and_config(command, option_list=[], expected_arguments=("CLUST
       logging.warn("No cluster named '%s' found configured.  See documentation on github for more information." % cluster_name)
   opt = merge_config_with_options(cluster_name, config, options_dict)
 
+  missing = []
+  for k in REQUIRED_FIELDS:
+      if k not in opt:
+          missing.append(k)
+
+  if missing:
+    raise RuntimeError("Cluster definition missing required fields: %s" % ", ".join(missing))
+
+  # override ssh_options
+  opt['ssh_options'] = "-l %s -i %s -o StrictHostKeyChecking=no" % (
+    opt['ssh_user'],
+    opt['private_key']
+  )
+
   # expand private key path...this is often stored relative to the user's home directory
-  if 'private_key' in opt:
-      opt['private_key'] = os.path.expanduser(opt['private_key'])
+  opt['private_key'] = os.path.expanduser(opt['private_key'])
+
   # add in the config_dir
   if not opt.has_key('config_dir'):
     opt['config_dir'] = config_dir
@@ -519,6 +540,8 @@ out to see a list of valid commands and arguments."""
             print "Unable to find a suitable plugin for service type: %s" % options_dict.get('service_type')
             sys.exit(1)
 
+        env.user = options_dict.get("ssh_user")
+        env.key_filename = [options_dict.get("private_key")]
         cli.execute_command(args, options_dict)
     elif command == 'create-formatted-snapshot':
         snapshot_description = """Create an empty, formatted snapshot of size SIZE in GB (see help for
@@ -538,7 +561,8 @@ required options)."""
         key_name = options_dict.get('key_name')
         ami = options_dict.get('image_id')
         private_key = options_dict.get('private_key')
-        ssh_options = '-i %s -o StrictHostKeyChecking=no' % private_key
+        ssh_user = options_dict.get('ssh_user')
+        ssh_options = '-l %s -i %s -o StrictHostKeyChecking=no' % (ssh_user, private_key)
 
         # which AMI to use
         if ami is None:

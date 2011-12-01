@@ -51,14 +51,31 @@ class SimpleService(ServicePlugin):
         the service before starting it
         """
         wait_time = 3
+        errcount = 0
         command = "ls %s" % wait_dir
         ssh_command = self._get_standard_ssh_command(instance, ssh_options, command)
 
         self.logger.info("Waiting for install with command %s" % ssh_command)
         while True:
-            retcode = subprocess.call(ssh_command, shell=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
-            if retcode == 0:
+            if errcount >= 10:
+                raise TimeoutException("Maximum errors exceeded.")
+            try:
+                subprocess.check_output(ssh_command, shell=True, stderr=subprocess.STDOUT)
                 break
+            except subprocess.CalledProcessError, e:
+                error = e.output.strip()
+                retcode = e.returncode
+                if retcode != 255:
+                    print error
+                    print "Return code: %d" % retcode
+                elif retcode == 255 and "connection refused" in error.lower():
+                    print "Connection refused error. Typically means SSH services have not been started yet. Retrying."
+                    errcount += 1
+                else:
+                    print "SSH error. Cause: %s" % e.output.strip()
+                    print "Return code: %d" % retcode
+                    raise
+
             self.logger.debug("Sleeping for %d seconds..." % wait_time)
             time.sleep(wait_time)
 
@@ -102,7 +119,3 @@ class SimpleService(ServicePlugin):
             raise Exception("This cluster is already running.  It must be terminated prior to being launched again.")
 
         self.expand_cluster(instance_template, ssh_options, wait_dir)
-
-    def login(self, instance, ssh_options):
-        ssh_command = self._get_standard_ssh_command(instance, ssh_options)
-        subprocess.call(ssh_command, shell=True)

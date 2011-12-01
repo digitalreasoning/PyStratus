@@ -123,11 +123,6 @@ where COMMAND and [OPTIONS] may be one of:
                                        unbounded_args=True)
         opt.update(options_dict)
 
-        # check for the cassandra-specific files
-        if opt.get('cassandra_config_file') is None:
-            print "ERROR: No cassandra_config_file configured. Aborting."
-            sys.exit(1)
-
         # test files
         for key in ['cassandra_config_file']:
             if opt.get(key) is not None:
@@ -165,11 +160,6 @@ where COMMAND and [OPTIONS] may be one of:
         opt, args = self.parse_options(self._command_name,
                                        argv)
         opt.update(options_dict)
-
-        # check for the cassandra-specific files
-        if opt.get('cassandra_config_file') is None:
-            print "ERROR: No cassandra_config_file configured. Aborting."
-            sys.exit(1)
 
         # test files
         for key in ['cassandra_config_file']:
@@ -213,28 +203,9 @@ where COMMAND and [OPTIONS] may be one of:
                                       expected_arguments=expected_arguments)
         opt.update(options_dict)
 
-        # check for the cassandra-specific files
-        if opt.get('cassandra_config_file') is None:
-            print "ERROR: No cassandra_config_file configured. Aborting."
+        if self.service.get_instances() :
+            print "This cluster is already running.  It must be terminated prior to being launched again."
             sys.exit(1)
-
-        if opt.get('keyspace_definitions_file') is None:
-            print "WARNING: No keyspace_definitions_file configured. You can ignore this for Cassandra v0.6.x"
-
-        # test files
-        for key in ['cassandra_config_file', 'keyspace_definitions_file']:
-            if opt.get(key) is not None:
-                try:
-                    url = urllib.urlopen(opt.get(key))
-                    data = url.read()
-                except: 
-                    raise
-                    print "The file defined by %s (%s) does not exist. Aborting." % (key, opt.get(key))
-                    sys.exit(1)
-
-#        if self.service.get_instances() :
-#            print "This cluster is already running.  It must be terminated prior to being launched again."
-#            sys.exit(1)
 
         number_of_nodes = int(args[0])
         instance_template = InstanceTemplate(
@@ -254,10 +225,7 @@ where COMMAND and [OPTIONS] may be one of:
 
         print "Launching cluster with %d instance(s)...please wait." % number_of_nodes
 
-        self.service.launch_cluster(instance_template,
-                                    opt.get('ssh_options'),
-                                    opt.get('cassandra_config_file'),
-                                    opt.get('keyspace_definitions_file')) 
+        self.service.launch_cluster(instance_template, opt)
 
 
         log_cluster_action(opt.get('config_dir'), self._cluster_name,

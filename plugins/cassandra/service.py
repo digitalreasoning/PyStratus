@@ -6,11 +6,16 @@ import urllib
 import tempfile
 import socket
 
+from fabric.api import *
+from fabric.contrib import files
+
 from cloud.cluster import TimeoutException
 from cloud.service import InstanceTemplate
 from cloud.plugin import ServicePlugin 
 from cloud.util import xstr
 from cloud.util import check_output
+from cloud.util import FULL_HIDE
+from cloud.decorators import timeout
 
 from yaml import load as parse_yaml
 from yaml import dump as dump_yaml
@@ -109,11 +114,14 @@ class CassandraService(ServicePlugin):
 
         self._attach_storage(instance_template.roles)
 
-        self._transfer_config_files(ssh_options,
-                                    config_file,
-                                    new_instances,
-                                    new_cluster=False,
-                                    tokens=new_tokens)
+        # pull the remote cassandra.yaml file, modify it, and push it back out
+        self._modify_
+
+        #self._transfer_config_files(ssh_options,
+        #                            config_file,
+        #                            new_instances,
+        #                            new_cluster=False,
+        #                            tokens=new_tokens)
         first = True
         for instance in new_instances:
             if not first:
@@ -122,12 +130,11 @@ class CassandraService(ServicePlugin):
             else:
                 first = False
             self.logger.info("Starting cassandra on instance %s." % instance.id)
-            self.start_cassandra(ssh_options, config_file, create_keyspaces=False, instances=[instance], print_ring=False)
+            self.start_cassandra(ssh_options, instances=[instance], print_ring=False)
         self.print_ring(ssh_options, instances[0])
 
 
-    def launch_cluster(self, instance_template, ssh_options, config_file, 
-                             keyspace_file=None):
+    def launch_cluster(self, instance_template, options):
         """
         """
         if self.get_instances() :
@@ -158,17 +165,20 @@ class CassandraService(ServicePlugin):
 
         self.logger.debug("Instances started: %s" % (str(new_instances),))
         
+        # attach storage
         self._attach_storage(instance_template.roles)
+
         new_cluster = (len(instances) == len(instance_ids))
-        self._transfer_config_files(ssh_options,
-                                    config_file, 
-                                    new_instances,
-                                    keyspace_file,
-                                    new_cluster=new_cluster)
-        self.start_cassandra(ssh_options, config_file, create_keyspaces=(new_cluster and keyspace_file is not None), instances=new_instances)
+
+        ssh_options = options.get("ssh_options")
+
+        # configure the individual instances
+        self._configure_cassandra(new_instances, new_cluster=new_cluster)
+
+        # start up the service
+        self.start_cassandra(ssh_options, instances=new_instances)
     
-    def _transfer_config_files(self, ssh_options, config_file, instances,
-                                     keyspace_file=None, new_cluster=True, tokens=None):
+    def _configure_cassandra(self, instances, new_cluster=True, tokens=None):
         """
         """
         # we need all instances for seeds, but we should only transfer to new instances!
@@ -178,12 +188,7 @@ class CassandraService(ServicePlugin):
         else :
             potential_seeds = [instance for instance in all_instances if instance not in instances]
 
-
-        self.logger.debug("Waiting for %d Cassandra instance(s) to install..." % len(instances))
-        for instance in instances:
-            self._wait_for_cassandra_install(instance, ssh_options)
-
-        self.logger.debug("Copying configuration files to %d Cassandra instances..." % len(instances))
+        self.logger.debug("Configuring %d Cassandra instances..." % len(instances))
 
         seed_ips = [str(instance.private_dns_name) for instance in potential_seeds[:2]]
         if tokens == None :
@@ -191,52 +196,69 @@ class CassandraService(ServicePlugin):
 
         # for each instance, generate a config file from the original file and upload it to
         # the cluster node
-        for i in range(len(instances)):
-            local_file, remote_file = self._modify_config_file(instance=instances[i],
-                                                               config_file=config_file,
-                                                               seed_ips=seed_ips,
-                                                               token=str(tokens[i]),
-                                                               auto_bootstrap=not new_cluster)
+        for i, instance in enumerate(instances):
+            self._configure_cassandra_instance(instance=instance, 
+                                               seed_ips=seed_ips, 
+                                               token=str(tokens[i]), 
+                                               auto_bootstrap=not new_cluster)
 
-            # Upload modified config file
-            scp_command = 'scp %s -r %s root@%s:/usr/local/apache-cassandra/conf/%s' % (xstr(ssh_options),
-                                                     local_file, instances[i].public_dns_name, remote_file)
-            subprocess.call(scp_command, shell=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+        #self.logger.debug("Waiting for %d Cassandra instance(s) to install..." % len(instances))
+        #for instance in instances:
+        #    self._wait_for_cassandra_service(instance)
 
-            # delete temporary file
-            os.unlink(local_file)
-
-        if keyspace_file and new_cluster:
-            keyspace_data = urllib.urlopen(keyspace_file).read()
-            fd, temp_keyspace_file = tempfile.mkstemp(prefix="keyspaces.txt_", text=True)
-            os.write(fd, keyspace_data)
-            os.close(fd)
-
-            self.logger.debug("Copying keyspace definition file to first Cassandra instance...")
-
-            # Upload keyspace definitions file
-            scp_command = 'scp %s -r %s root@%s:/usr/local/apache-cassandra/conf/keyspaces.txt' % \
-                          (xstr(ssh_options), temp_keyspace_file, instances[0].public_dns_name)
-            subprocess.call(scp_command, shell=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
-
-            # remove temporary file
-            os.unlink(temp_keyspace_file)
-    
-    def _wait_for_cassandra_install(self, instance, ssh_options):
+    @timeout(600)
+    def _wait_for_cassandra_service(self, instance):
         """
-        Simply wait for the cassandra directory to be available so that we can begin configuring
-        the service before starting it
+        Waiting for the cassandra.pid file
         """
         wait_time = 3
-        command = "ls /usr/local/apache-cassandra"
-        ssh_command = self._get_standard_ssh_command(instance, ssh_options, command)
+        with settings(host_string=instance.public_dns_name, warn_only=True):
+            with FULL_HIDE:
+                try:
+                    while not files.exists("/var/run/cassandra.pid", use_sudo=True):
+                        self.logger.debug("Sleeping for %d seconds..." % wait_time)
+                        time.sleep(wait_time)
+                # catch SystemExit because paramiko will call abort when it detects a failure
+                # in establishing an SSH connection
+                except SystemExit:
+                    pass
 
-        while True:
-            retcode = subprocess.call(ssh_command, shell=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
-            if retcode == 0:
-                break
-            self.logger.debug("Sleeping for %d seconds..." % wait_time)
-            time.sleep(wait_time)
+    def _configure_cassandra_instance(self, instance, seed_ips, token, set_tokens=True, auto_bootstrap=False):
+        self.logger.debug("Configuring %s..." % instance.id)
+        temp_dir = tempfile.mkdtemp()
+        temp_file = os.path.join(temp_dir, "cassandra.yaml")
+
+        self.logger.debug("Temp directory: %s" % temp_dir)
+        self.logger.debug("Temp file: %s" % temp_file)
+        with settings(host_string=instance.public_dns_name):
+            with hide("everything"):
+                try:
+                    # get yaml file
+                    get("/etc/cassandra/cassandra.yaml", temp_file)
+
+                    # modify it
+                    f = open(temp_file)
+                    yaml = parse_yaml(f)
+                    f.close()
+
+                    yaml['seed_provider'][0]['parameters'][0]['seeds'] = ",".join(seed_ips)
+                    if set_tokens is True :
+                        yaml['initial_token'] = token
+                    if auto_bootstrap :
+                        yaml['auto_bootstrap'] = 'true'
+                    yaml['data_file_directories'] = ['/mnt/cassandra-data']
+                    yaml['commitlog_directory'] = '/mnt/cassandra-logs'
+                    yaml['listen_address'] = str(instance.private_dns_name)
+                    yaml['rpc_address'] = str(instance.public_dns_name)
+
+                    f = open(temp_file, "w")
+                    f.write(dump_yaml(yaml))
+                    f.close()
+
+                    # put modified yaml file
+                    put(temp_file, "/etc/cassandra/cassandra.yaml", use_sudo=True)
+                except SystemExit, e:
+                    pass
 
     def hack_config_for_multi_region(self, ssh_options, seeds):
         instances = self.get_instances()
@@ -268,31 +290,7 @@ class CassandraService(ServicePlugin):
 
             os.unlink(temp_file)
             os.unlink(downloaded_file)
-            
-    def _modify_config_file(self, instance, config_file, seed_ips, token, set_tokens=True, auto_bootstrap=False):
-        # YAML (0.7.x+)
-        if config_file.endswith(".yaml"):
-            remote_file = "cassandra.yaml"
 
-            yaml = parse_yaml(urllib.urlopen(config_file))
-            yaml['seed_provider'][0]['parameters'][0]['seeds'] = ",".join(seed_ips)
-            if set_tokens is True :
-                yaml['initial_token'] = token
-            if auto_bootstrap :
-                yaml['auto_bootstrap'] = 'true'
-            yaml['data_file_directories'] = ['/mnt/cassandra-data']
-            yaml['commitlog_directory'] = '/mnt/cassandra-logs'
-            yaml['listen_address'] = str(instance.public_dns_name)
-            yaml['rpc_address'] = str(instance.public_dns_name)
-            
-            fd, temp_file = tempfile.mkstemp(prefix='cassandra.yaml_', text=True)
-            os.write(fd, dump_yaml(yaml))
-            os.close(fd)
-        else:
-            raise Exception("Configuration file must be yaml (implies Cassandra 0.7.x or greater)") 
-
-        return temp_file, remote_file
-    
     def _get_evenly_spaced_tokens_for_n_instances(self, n):
         return [i*(2**127/n) for i in range(1,n+1)]
 
@@ -436,7 +434,7 @@ class CassandraService(ServicePlugin):
 
         return retcode
 
-    def start_cassandra(self, ssh_options, config_file, create_keyspaces=False, instances=None, print_ring=True, retry=False):
+    def start_cassandra(self, ssh_options, instances=None, print_ring=True, retry=False):
         """Start Cassandra services on instances.
         To validate that Cassandra is running, this will check the output of
         nodetool ring, make sure that gossip and thrift are running, and check
@@ -456,19 +454,23 @@ class CassandraService(ServicePlugin):
         self.logger.debug("Starting Cassandra service on %d instance(s)..." % len(instances))
 
         for instance in instances:
-            # check to see if a pidfile exists, AND that a process is running
-            # with that pid (protecting against stray pidfiles)
-            command = """if [[ ! $(ps aux | grep $(cat /root/cassandra.pid 2>/dev/null) 2>/dev/null | grep -v grep) ]]
-            then 
-                if [ -f /root/cassandra.pid ]; then rm -f /root/cassandra.pid; fi
-                nohup /usr/local/apache-cassandra/bin/cassandra -p /root/cassandra.pid &> /root/cassandra.out &
-            fi
-            """
-            ssh_command = self._get_standard_ssh_command(instance, ssh_options, command)
-            retcode = subprocess.call(ssh_command, shell=True)
+            with FULL_HIDE:
+                with settings(host_string=instance.public_dns_name, warn_only=True):
+                    while True:
+                        try:
+                            # check to see if cassandra is running
+                            result = sudo("service cassandra status")
+                            if result.failed:
+                                print "Cassandra is not running. Attempting to start now..."
+                                sudo("service cassandra start")
+                                break
+                            else:
+                                print "Cassandra is already running."
+                                break
+                        except SystemExit, e:
+                            #print str(e)
+                            print "BAR"
 
-            if retcode != 0:
-                self.logger.warn("Return code for starting Cassandra: %d" % retcode)
 
         # test connection
         self.logger.debug("Testing connection to each Cassandra instance...")
@@ -486,7 +488,7 @@ class CassandraService(ServicePlugin):
                     
                     # cassandra needs some time to fully shutdown
                     time.sleep(5)
-                    self.start_cassandra(ssh_options, config_file, create_keyspaces, instances, print_ring, retry=True)
+                    self.start_cassandra(ssh_options, instances, print_ring, retry=True)
                     return
                 else:
                     raise TimeoutException()
@@ -521,11 +523,6 @@ class CassandraService(ServicePlugin):
                 if thrift_retcode != 0:
                     self.logger.warn("Return code for 'netstat | grep 9160' (thrift) on '%s': %d" % (temp_instances[-1].id, thrift_retcode))
 
-        if create_keyspaces:
-            self._create_keyspaces_from_definitions_file(instances[0], config_file, ssh_options)
-        else:
-            self.logger.debug("create_keyspaces is False. Skipping keyspace generation.")
-        
         # TODO: Do I need to wait for the keyspaces to propagate before printing the ring?
         # print ring after everything started
         if print_ring:
@@ -541,7 +538,3 @@ class CassandraService(ServicePlugin):
             command = "kill `cat /root/cassandra.pid`"
             ssh_command = self._get_standard_ssh_command(instance, ssh_options, command)
             retcode = subprocess.call(ssh_command, shell=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
-
-    def login(self, instance, ssh_options):
-        ssh_command = self._get_standard_ssh_command(instance, ssh_options)
-        subprocess.call(ssh_command, shell=True)
