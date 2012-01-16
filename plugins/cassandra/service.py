@@ -43,12 +43,10 @@ def find_new_token(existing_tokens):
     return range[0] + (range[1]-range[0])/2
 
 def parse_nodeline(nodeline) :
-    ip = nodeline[0:15].strip()
-    status = nodeline[16:22].strip()
-    state = nodeline[23:30].strip()
-    load = nodeline[31:46].strip()
-    token = long(nodeline[55:-1].strip())
-    return {'ip':ip, 'status':status, 'state':state, 'load':load, 'token':token}
+    fields = ("ip", "datacenter", "rack", "status", "state", "load", "distribution", "token")
+    values = nodeline.split()
+    values = values[:5] + [" ".join(values[5:7])] + values[7:]
+    return dict(zip(fields, values))
 
 class CassandraService(ServicePlugin):
     """
@@ -74,12 +72,12 @@ class CassandraService(ServicePlugin):
             all_tokens.append(new_token)
         return [token for token in all_tokens if token not in existing_tokens]
 
-    def expand_cluster(self, instance_template, ssh_options, config_file, new_tokens=None):
+    def expand_cluster(self, instance_template, new_tokens=None):
         instances = self.get_instances()
         if instance_template.number > len(instances):
             raise Exception("The best we can do is double the cluster size at one time.  Please specify %d instances or less." % len(instances))
         if new_tokens is None:
-            existing_tokens = [node['token'] for node in self._discover_ring(ssh_options)]
+            existing_tokens = [node['token'] for node in self._discover_ring()]
             self.logger.debug("Tokens: %s" % str(existing_tokens))
             if len(instances) != len(existing_tokens):
                 raise Exception("There are %d existing instances, we need that many existing tokens..." % len(instances))
@@ -117,11 +115,6 @@ class CassandraService(ServicePlugin):
         # pull the remote cassandra.yaml file, modify it, and push it back out
         self._modify_
 
-        #self._transfer_config_files(ssh_options,
-        #                            config_file,
-        #                            new_instances,
-        #                            new_cluster=False,
-        #                            tokens=new_tokens)
         first = True
         for instance in new_instances:
             if not first:
@@ -130,8 +123,9 @@ class CassandraService(ServicePlugin):
             else:
                 first = False
             self.logger.info("Starting cassandra on instance %s." % instance.id)
-            self.start_cassandra(ssh_options, instances=[instance], print_ring=False)
-        self.print_ring(ssh_options, instances[0])
+            self.start_cassandra(instances=[instance], print_ring=False)
+
+        self.print_ring(instances[0])
 
 
     def launch_cluster(self, instance_template, options):
@@ -170,13 +164,11 @@ class CassandraService(ServicePlugin):
 
         new_cluster = (len(instances) == len(instance_ids))
 
-        ssh_options = options.get("ssh_options")
-
         # configure the individual instances
         self._configure_cassandra(new_instances, new_cluster=new_cluster)
 
         # start up the service
-        self.start_cassandra(ssh_options, instances=new_instances)
+        self.start_cassandra(instances=new_instances)
     
     def _configure_cassandra(self, instances, new_cluster=True, tokens=None):
         """
@@ -228,68 +220,77 @@ class CassandraService(ServicePlugin):
         temp_dir = tempfile.mkdtemp()
         temp_file = os.path.join(temp_dir, "cassandra.yaml")
 
-        self.logger.debug("Temp directory: %s" % temp_dir)
         self.logger.debug("Temp file: %s" % temp_file)
-        with settings(host_string=instance.public_dns_name):
-            with hide("everything"):
-                try:
-                    # get yaml file
-                    get("/etc/cassandra/cassandra.yaml", temp_file)
+        with settings(host_string=instance.public_dns_name, warn_only=True), hide("everything"):
+            # create directories and log files
+            sudo("mkdir -p /mnt/cassandra-data")
+            sudo("mkdir -p /mnt/cassandra-logs")
+            sudo("touch /var/log/cassandra/output.log")
+            sudo("touch /var/log/cassandra/system.log")
 
-                    # modify it
-                    f = open(temp_file)
-                    yaml = parse_yaml(f)
-                    f.close()
+            # set permissions
+            sudo("chown -R cassandra:cassandra /mnt/cassandra-*")
+            sudo("chown -R cassandra:cassandra /var/log/cassandra")
 
-                    yaml['seed_provider'][0]['parameters'][0]['seeds'] = ",".join(seed_ips)
-                    if set_tokens is True :
-                        yaml['initial_token'] = token
-                    if auto_bootstrap :
-                        yaml['auto_bootstrap'] = 'true'
-                    yaml['data_file_directories'] = ['/mnt/cassandra-data']
-                    yaml['commitlog_directory'] = '/mnt/cassandra-logs'
-                    yaml['listen_address'] = str(instance.private_dns_name)
-                    yaml['rpc_address'] = str(instance.public_dns_name)
+            try:
+                # get yaml file
+                get("/etc/cassandra/cassandra.yaml", temp_file)
 
-                    f = open(temp_file, "w")
-                    f.write(dump_yaml(yaml))
-                    f.close()
+                # modify it
+                f = open(temp_file)
+                yaml = parse_yaml(f)
+                f.close()
 
-                    # put modified yaml file
-                    put(temp_file, "/etc/cassandra/cassandra.yaml", use_sudo=True)
-                except SystemExit, e:
-                    pass
+                yaml['seed_provider'][0]['parameters'][0]['seeds'] = ",".join(seed_ips)
+                if set_tokens is True :
+                    yaml['initial_token'] = token
+                if auto_bootstrap :
+                    yaml['auto_bootstrap'] = 'true'
+                yaml['data_file_directories'] = ['/mnt/cassandra-data']
+                yaml['commitlog_directory'] = '/mnt/cassandra-logs'
+                yaml['listen_address'] = str(instance.private_dns_name)
+                yaml['rpc_address'] = str(instance.public_dns_name)
+
+                f = open(temp_file, "w")
+                f.write(dump_yaml(yaml))
+                f.close()
+
+                # put modified yaml file
+                put(temp_file, "/etc/cassandra/cassandra.yaml", use_sudo=True)
+            except SystemExit, e:
+                raise
+                pass
+
+        os.unlink(temp_file)
 
     def hack_config_for_multi_region(self, ssh_options, seeds):
         instances = self.get_instances()
-        downloaded_file = "cassandra.yaml.downloaded"
+        downloaded_file = os.path.join("/tmp", "cassandra.yaml.downloaded")
         for instance in instances:
+            with settings(host_string=instance.public_dns_name, warn_only=True):
+                # download config file
+                print "downloading config from %s" % instance.public_dns_name
+                get("/etc/cassandra/cassandra.yaml", downloaded_file)
 
-            # download config file
-            print "downloading config from %s" % instance.public_dns_name
-            scp_command = 'scp %s root@%s:/usr/local/apache-cassandra/conf/cassandra.yaml %s' % (xstr(ssh_options), instance.public_dns_name, downloaded_file)
-            subprocess.call(scp_command, shell=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+                print "modifying config from %s" % instance.public_dns_name
+                yaml = parse_yaml(urllib.urlopen(downloaded_file))
+                yaml['seed_provider'][0]['parameters'][0]['seeds'] = seeds
+                yaml['listen_address'] = str(instance.public_dns_name)
+                yaml['rpc_address'] = str(instance.public_dns_name)
+                yaml['broadcast_address'] = socket.gethostbyname(str(instance.public_dns_name))
+                yaml['endpoint_snitch'] = 'org.apache.cassandra.locator.Ec2MultiRegionSnitch'
+                
+                print "saving config from %s" % instance.public_dns_name
+                fd, temp_file = tempfile.mkstemp(prefix='cassandra.yaml_', text=True)
+                os.write(fd, dump_yaml(yaml))
+                os.close(fd)
 
-            print "modifying config from %s" % instance.public_dns_name
-            yaml = parse_yaml(urllib.urlopen(downloaded_file))
-            yaml['seed_provider'][0]['parameters'][0]['seeds'] = seeds
-            yaml['listen_address'] = str(instance.public_dns_name)
-            yaml['rpc_address'] = str(instance.public_dns_name)
-            yaml['broadcast_address'] = socket.gethostbyname(str(instance.public_dns_name))
-            yaml['endpoint_snitch'] = 'org.apache.cassandra.locator.Ec2MultiRegionSnitch'
-            
-            print "saving config from %s" % instance.public_dns_name
-            fd, temp_file = tempfile.mkstemp(prefix='cassandra.yaml_', text=True)
-            os.write(fd, dump_yaml(yaml))
-            os.close(fd)
+                #upload config file
+                print "uploading new config to %s" % instance.public_dns_name
+                put(temp_file, "/etc/cassandra/cassandra.yaml", use_sudo=True)
 
-            #upload config file
-            print "uploading new config to %s" % instance.public_dns_name
-            scp_command = 'scp %s %s root@%s:/usr/local/apache-cassandra/conf/cassandra.yaml' % (xstr(ssh_options), temp_file, instance.public_dns_name)
-            subprocess.check_call(scp_command, shell=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
-
-            os.unlink(temp_file)
-            os.unlink(downloaded_file)
+                os.unlink(temp_file)
+                os.unlink(downloaded_file)
 
     def _get_evenly_spaced_tokens_for_n_instances(self, n):
         return [i*(2**127/n) for i in range(1,n+1)]
@@ -304,137 +305,122 @@ class CassandraService(ServicePlugin):
         else:
             raise Exception("Configuration file must be on of xml or yaml")
 
-    def _create_keyspaces_from_definitions_file(self, instance, config_file, ssh_options):
-        # TODO: Keyspaces could already exist...how do I check this?
-        # TODO: Can it be an arbitrary node?
+    def print_ring(self, instance=None, return_output=False):
+        # check to see if cassandra is running
+        with settings(host_string=instance.public_dns_name, warn_only=True), hide("everything"):
+            result = sudo("service cassandra status")
 
-        self.logger.debug("Creating keyspaces using Thrift API via keyspaces_definitions_file...")
+        if result.failed:
+            return result.return_code, "Cassandra does not appear to be running."
 
-        # test for the keyspace file first
-        command = "ls /usr/local/apache-cassandra/conf/keyspaces.txt"
-        ssh_command = self._get_standard_ssh_command(instance, ssh_options, command)
-        retcode = subprocess.call(ssh_command, shell=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
-
-        if retcode != 0:
-            self.logger.warn("Unable to find /usr/local/apache-cassandra/conf/keyspaces.txt. Skipping keyspace generation.")
-            return
-        else:
-            self.logger.debug("Found keyspaces.txt...Proceeding with keyspace generation.")
-
-        port = self._get_config_value(config_file, "rpc_port", "ThriftPort")
-
-        command = "/usr/local/apache-cassandra/bin/cassandra-cli --host %s --port %s --batch " \
-                  "< /usr/local/apache-cassandra/conf/keyspaces.txt" % (instance.private_dns_name, port)
-        ssh_command = self._get_standard_ssh_command(instance, ssh_options, command)
-        retcode = subprocess.call(ssh_command, shell=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
-
-        # TODO: do this or not?
-        # remove keyspace file
-        #command = "rm -rf /usr/local/apache-cassandra/conf/keyspaces.txt"
-        #ssh_command = self._get_standard_ssh_command(instance, ssh_options, command)
-        #subprocess.call(ssh_command, shell=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
-
-    def print_ring(self, ssh_options, instance=None):
         print "\nRing configuration..."
-        print "NOTE: May not be accurate if the cluster just started or expanded."
-        return self._run_nodetool(ssh_options, "ring", instance)
+        print "NOTE: May not be accurate if the cluster just started or expanded.\n"
+        return self._run_nodetool("ring", instance, return_output=return_output)
 
-    def _run_nodetool(self, ssh_options, ntcommand, instance=None, return_output=False):
+    def _run_nodetool(self, ntcommand, instance=None, return_output=False):
         if instance is None:
-          instance = self.get_instances()[0]
+            instance = self.get_instances()[0]
 
         self.logger.debug("running nodetool on instance %s", instance.id)
-        command = "/usr/local/apache-cassandra/bin/nodetool -h localhost %s" % ntcommand
-        ssh_command = self._get_standard_ssh_command(instance, ssh_options, command)
-        if return_output :
-            stdout = subprocess.PIPE
-        else :
-            stdout = None
-        proc = subprocess.Popen(ssh_command, shell=True, stdout=stdout)
+        with settings(host_string=instance.public_dns_name, warn_only=True), hide("everything"):
+            output = sudo("nodetool -h %s %s" % (instance.private_dns_name, ntcommand))
         if return_output:
-            return (proc.wait(), proc.stdout)
+            return (output.return_code, output)
         else:
-            return proc.wait()
+            return output.return_code
 
-    def _discover_ring(self, ssh_options, instance=None):
-        parsers = [
-        ('Address         Status State   Load            Owns    Token                                       \n', parse_nodeline, 2),
-         None
-        ]
-        self.logger.debug("discovering ring...")
-        retcode, output = self._run_nodetool(ssh_options, "ring", instance, True)
-        self.logger.debug("node tool returned %d" % retcode)
-        lines = output.readlines()
-        for parse_info in parsers :
-            if parse_info is None:
-                raise Exception("I don't recognize the nodetool output - no parser found.")
-            if lines[0] == parse_info[0]:
-                break
-        nodelines = lines[parse_info[2]:]
-        self.logger.debug("found %d nodes" % len(nodelines))
-        output.close()
-        return [parse_info[1](nodeline) for nodeline in nodelines]
+    def _discover_ring(self, instance=None):
+        if instance is None:
+            instance = self.get_instances()[0]
 
-    def calc_down_nodes(self, ssh_options, instance=None):
-        nodes = self._discover_ring(ssh_options, instance)
+        with settings(host_string=instance.public_dns_name, warn_only=True), hide("everything"):
+            status = sudo("service cassandra status")
+
+            if status.failed:
+                raise RuntimeException("Cassandra does not appear to be running.")
+
+            self.logger.debug("Discovering ring...")
+            retcode, output = self._run_nodetool("ring", instance, return_output=True)
+            self.logger.debug("node tool output:\n%s" % output)
+            lines = output.split("\n")[2:]
+
+            assert len(lines) > 0, "Ring output must have more than two lines."
+
+            self.logger.debug("Found %d nodes" % len(lines))
+        
+            return [parse_nodeline(line) for line in lines]
+
+    def calc_down_nodes(self, instance=None):
+        nodes = self._discover_ring(instance)
         return [node['token'] for node in nodes if node['status'] == 'Down']
 
-    def replace_down_nodes(self, instance_template, ssh_options, config_file):
-        down_tokens = self.calc_down_nodes(ssh_options)
+    def replace_down_nodes(self, instance_template, config_file):
+        down_tokens = self.calc_down_nodes()
         instance_template.number = len(down_tokens)
-        self.expand_cluster(instance_template, ssh_options, config_file, [x-1 for x in down_tokens])
-        self.remove_down_nodes(ssh_options)
+        self.expand_cluster(instance_template, config_file, [x-1 for x in down_tokens])
+        self.remove_down_nodes()
 
-    def remove_down_nodes(self, ssh_options, instance=None):
-        nodes = self._discover_ring(ssh_options, instance)
+    def remove_down_nodes(self, instance=None):
+        nodes = self._discover_ring(instance)
         for node in nodes:
             if node['status'] == 'Down' and node['state'] == 'Normal':
                 print "Removing node %s." % node['token']
-                self._run_nodetool(ssh_options, 'removetoken %s' % node['token'], instance)
+                self._run_nodetool('removetoken %s' % node['token'], instance)
 
-    def rebalance(self, ssh_options, offset=0):
+    def rebalance(self, offset=0):
         instances = self.get_instances()
         tokens = self._get_evenly_spaced_tokens_for_n_instances(len(instances))
+        
+        for token in tokens:
+            #print "%s  --->  %s" % (token, (int(token)+offset))
+            assert (int(token)+offset) <= 2**127, "Failed token: %s" % str((int(token)+offset))
+
         self.logger.info("new token space: %s" % str(tokens))
-        for i in range(len(instances)):
+        for i, instance in enumerate(instances):
             token = str(int(tokens[i]) + offset)
-            instance = instances[i]
             self.logger.info("Moving instance %s to token %s" % (instance.id, token))
-            retcode = self._run_nodetool(ssh_options, "move %s" % token, instance=instance)
+            retcode, output = self._run_nodetool("move %s" % token, instance=instance, return_output=True)
             if retcode != 0 :
                 self.logger.warn("Move failed for instance %s with return code %d..." % (instance.id, retcode))
+                self.logger.warn(output)
             else :
                 self.logger.info("Move succeeded for instance %s..." % instance.id)
 
-    def _validate_ring(self, instance, ssh_options):
-        """Run nodetool to verify that a ring is valid."""
+    def _validate_ring(self, instance):
+        """
+        Run nodetool to verify that a ring is valid.
+        """
 
-        # remove ssh "nastygram" warnings since we need to parse
-        # the output (vs just looking at a return code)
-        ssh_options = " -q " + ssh_options
+        ring_output = sudo("nodetool --host %s ring" % instance.private_dns_name)
 
-        command = "/usr/local/apache-cassandra/bin/nodetool -h %s ring" % instance.private_dns_name
-        ssh_command = self._get_standard_ssh_command(instance, ssh_options, command)
+        if ring_output.failed:
+            return ring_output.return_code
+
+        # some nodes can be down, but nodetool will still exit cleanly,
+        # so doing some extra validation to ensure that all nodes of 
+        # the ring are "Up" and "Normal" and manually set a bad return 
+        # code otherwise
         retcode = 0
-        try:
-            # some nodes can be down, but nodetool will still exit cleanly,
-            # so doing some extra validation to ensure that all nodes of 
-            # the ring are "Up" and "Normal" and manually set a bad return 
-            # code otherwise
-            ring_output = check_output(ssh_command, shell=True, stderr=subprocess.STDOUT)
-            for node in ring_output.splitlines()[3:]:
-                nodesplit = node.split()
-                self.logger.debug("Node %s is %s and %s" % (nodesplit[0], nodesplit[3], nodesplit[4]))
-                if nodesplit[3].lower() != "up" and nodesplit[4].lower() != "normal":
-                    self.logger.debug("Node %s ring is not healthy" % nodesplit[0])
-                    retcode = 200
-        except subprocess.CalledProcessError, e:
-            self.logger.debug(e)
-            retcode = e.returncode
+        for node in ring_output.splitlines()[3:]:
+            #host = node[:16].strip()
+            #data_center = node[16:28].strip()
+            #rack = node[28:40].strip()
+            #status = node[40:47].strip()
+            #state = node[47
+
+            nodesplit = node.split()
+
+            self.logger.debug("Node %s is %s and %s" % (nodesplit[0], nodesplit[3], nodesplit[4]))
+            if nodesplit[3].lower() != "up" and nodesplit[4].lower() != "normal":
+                self.logger.debug("Node %s ring is not healthy" % nodesplit[0])
+                self.logger.debug("Ring status:")
+                self.logger.debug(ring_output)
+                retcode = 200
 
         return retcode
 
-    def start_cassandra(self, ssh_options, instances=None, print_ring=True, retry=False):
+    @timeout(600)
+    def start_cassandra(self, instances=None, print_ring=True, retry=False):
         """Start Cassandra services on instances.
         To validate that Cassandra is running, this will check the output of
         nodetool ring, make sure that gossip and thrift are running, and check
@@ -451,90 +437,82 @@ class CassandraService(ServicePlugin):
         if instances is None:
             instances = self.get_instances()
 
-        self.logger.debug("Starting Cassandra service on %d instance(s)..." % len(instances))
-
         for instance in instances:
-            with FULL_HIDE:
-                with settings(host_string=instance.public_dns_name, warn_only=True):
-                    while True:
-                        try:
-                            # check to see if cassandra is running
-                            result = sudo("service cassandra status")
-                            if result.failed:
-                                print "Cassandra is not running. Attempting to start now..."
-                                sudo("service cassandra start")
-                                break
-                            else:
-                                print "Cassandra is already running."
-                                break
-                        except SystemExit, e:
-                            #print str(e)
-                            print "BAR"
+            with settings(host_string=instance.public_dns_name, warn_only=True), hide("everything"):
+                errors = -1
+                self.logger.info("Starting Cassandra service on %s..." % instance.id)
 
+                while True:
+                    try:
+                        # check to see if cassandra is running
+                        result = sudo("service cassandra status")
+                        if result.failed:
+                            # start it if this is the first time
+                            if errors < 0:
+                                self.logger.info("Cassandra is not running. Attempting to start now...")
+                                sudo("service cassandra start")
+                            elif errors >= 5:
+                                #tail = sudo("tail -n 50 /var/log/cassandra/output.log")
+                                #self.logger.error(tail)
+                                raise RuntimeError("Unable to start cassandra. Check the logs for more information.")
+                            self.logger.info("Error detecting Cassandra status...will try again in 3 seconds.")
+                            errors += 1
+                            time.sleep(3)
+                        else:
+                            self.logger.info("Cassandra is running.")
+                            break
+                    except SystemExit, e:
+                        self.logger.error(str(e))
 
         # test connection
         self.logger.debug("Testing connection to each Cassandra instance...")
 
-        timeout = 600
         temp_instances = instances[:]
-        start_time = time.time()
         while len(temp_instances) > 0:
-            if (time.time() - start_time >= timeout):
-                if self.current_attempt <= self.MAX_RESTART_ATTEMPTS:
-                    self.logger.info("Cassandra startup has failed, trying again; retry number %s (%s remain)" %
-                        (self.current_attempt, self.MAX_RESTART_ATTEMPTS-self.current_attempt))
-                    self.current_attempt += 1
-                    self.stop_cassandra(ssh_options, instances)
-                    
-                    # cassandra needs some time to fully shutdown
-                    time.sleep(5)
-                    self.start_cassandra(ssh_options, instances, print_ring, retry=True)
-                    return
+            instance = temp_instances[-1]
+
+            with settings(host_string=instance.public_dns_name, warn_only=True), hide("everything"):
+                # does the ring look ok?
+                ring_retcode = self._validate_ring(instance)
+
+                # is gossip running?
+                gossip_retcode = sudo("nodetool -h %s info | grep Gossip | grep true" % instance.private_dns_name).return_code
+
+                # are the netstats looking ok?
+                netstats_retcode = sudo("nodetool -h %s netstats | grep 'Mode: NORMAL'" % instance.private_dns_name).return_code
+
+                # is thrift running?
+                thrift_retcode = sudo("/bin/netstat -an | grep 9160").return_code
+
+                if ring_retcode == 0 and gossip_retcode == 0 and netstats_retcode == 0 and thrift_retcode == 0:
+                    temp_instances.pop()
                 else:
-                    raise TimeoutException()
-           
-            # does the ring look ok?
-            ring_retcode = self._validate_ring(temp_instances[-1], ssh_options)
+                    if ring_retcode != 0:
+                        self.logger.warn("Return code for 'nodetool ring' on '%s': %d" % (temp_instances[-1].id, ring_retcode))
+                    if gossip_retcode != 0:
+                        self.logger.warn("Return code for 'nodetool info | grep Gossip' on '%s': %d" % (temp_instances[-1].id, gossip_retcode))
+                    if netstats_retcode != 0:
+                        self.logger.warn("Return code for 'nodetool netstats | grep Normal' on '%s': %d" % (temp_instances[-1].id, netstats_retcode))
+                    if thrift_retcode != 0:
+                        self.logger.warn("Return code for 'netstat | grep 9160' (thrift) on '%s': %d" % (temp_instances[-1].id, thrift_retcode))
 
-            # is gossip running?
-            command = "/usr/local/apache-cassandra/bin/nodetool -h %s info | grep Gossip | grep true" % temp_instances[-1].private_dns_name
-            ssh_command = self._get_standard_ssh_command(temp_instances[-1], ssh_options, command)
-            gossip_retcode = subprocess.call(ssh_command, shell=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+                    time.sleep(3)
 
-            # are the netstats looking ok?
-            command = '/usr/local/apache-cassandra/bin/nodetool -h %s netstats | grep "Mode: Normal"' % temp_instances[-1].private_dns_name
-            ssh_command = self._get_standard_ssh_command(temp_instances[-1], ssh_options, command)
-            netstats_retcode = subprocess.call(ssh_command, shell=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
-
-            # is thrift running?
-            command = "/bin/netstat -an | grep 9160"
-            ssh_command = self._get_standard_ssh_command(temp_instances[-1], ssh_options, command)
-            thrift_retcode = subprocess.call(ssh_command, shell=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
-
-            if ring_retcode == 0 and gossip_retcode == 0 and netstats_retcode == 0 and thrift_retcode == 0:
-                temp_instances.pop()
-            else:
-                if ring_retcode != 0:
-                    self.logger.warn("Return code for 'nodetool ring' on '%s': %d" % (temp_instances[-1].id, ring_retcode))
-                if gossip_retcode != 0:
-                    self.logger.warn("Return code for 'nodetool info | grep Gossip' on '%s': %d" % (temp_instances[-1].id, gossip_retcode))
-                if netstats_retcode != 0:
-                    self.logger.warn("Return code for 'nodetool netstats | grep Normal' on '%s': %d" % (temp_instances[-1].id, netstats_retcode))
-                if thrift_retcode != 0:
-                    self.logger.warn("Return code for 'netstat | grep 9160' (thrift) on '%s': %d" % (temp_instances[-1].id, thrift_retcode))
-
-        # TODO: Do I need to wait for the keyspaces to propagate before printing the ring?
         # print ring after everything started
         if print_ring:
-            self.print_ring(ssh_options, instances[0])
+            retcode, output = self.print_ring(instances[0], return_output=True)
+            print output
 
         self.logger.debug("Startup complete.")
 
-    def stop_cassandra(self, ssh_options, instances=None):
+    def stop_cassandra(self, instances=None):
         if instances is None:
           instances = self.get_instances()
 
         for instance in instances:
-            command = "kill `cat /root/cassandra.pid`"
-            ssh_command = self._get_standard_ssh_command(instance, ssh_options, command)
-            retcode = subprocess.call(ssh_command, shell=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+            self.logger.info("Stopping Cassandra on %s" % instance.id)
+            with settings(host_string=instance.public_dns_name, warn_only=True), hide("everything"):
+                result = sudo("service cassandra stop")
+                self.logger.info(result)
+
+        self.logger.debug("Shutdown complete.")

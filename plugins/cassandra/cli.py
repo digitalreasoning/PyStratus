@@ -123,17 +123,6 @@ where COMMAND and [OPTIONS] may be one of:
                                        unbounded_args=True)
         opt.update(options_dict)
 
-        # test files
-        for key in ['cassandra_config_file']:
-            if opt.get(key) is not None:
-                try:
-                    url = urllib.urlopen(opt.get(key))
-                    data = url.read()
-                except:
-                    raise
-                    print "The file defined by %s (%s) does not exist. Aborting." % (key, opt.get(key))
-                    sys.exit(1)
-
         number_of_nodes = int(args[0])
         instance_template = InstanceTemplate(
             (self.service.CASSANDRA_NODE,),
@@ -152,9 +141,7 @@ where COMMAND and [OPTIONS] may be one of:
 
         print "Expanding cluster by %d instance(s)...please wait." % number_of_nodes
 
-        self.service.expand_cluster(instance_template,
-                                    opt.get('ssh_options'),
-                                    opt.get('cassandra_config_file'))
+        self.service.expand_cluster(instance_template)
 
     def replace_down_nodes(self, argv, options_dict):
         opt, args = self.parse_options(self._command_name,
@@ -172,7 +159,7 @@ where COMMAND and [OPTIONS] may be one of:
                     print "The file defined by %s (%s) does not exist. Aborting." % (key, opt.get(key))
                     sys.exit(1)
 
-        number_of_nodes = len(self.service.calc_down_nodes(opt.get('ssh_options')))
+        number_of_nodes = len(self.service.calc_down_nodes())
         instance_template = InstanceTemplate(
             (self.service.CASSANDRA_NODE,),
             number_of_nodes,
@@ -191,7 +178,6 @@ where COMMAND and [OPTIONS] may be one of:
         print "Replacing %d down instance(s)...please wait." % number_of_nodes
 
         self.service.replace_down_nodes(instance_template,
-                                        opt.get('ssh_options'),
                                         opt.get('cassandra_config_file'))
 
     def launch_cluster(self, argv, options_dict):
@@ -239,7 +225,7 @@ where COMMAND and [OPTIONS] may be one of:
             sys.exit(1)
 
         print "Stopping Cassandra service on %d instance(s)...please wait." % len(instances)
-        self.service.stop_cassandra(options_dict.get('ssh_options'), instances=instances)
+        self.service.stop_cassandra(instances=instances)
 
     def start_cassandra(self, argv, options_dict):
         instances = self.service.get_instances()
@@ -248,7 +234,7 @@ where COMMAND and [OPTIONS] may be one of:
             sys.exit(1)
 
         print "Starting Cassandra service on %d instance(s)...please wait." % len(instances)
-        self.service.start_cassandra(options_dict.get('ssh_options'), options_dict.get('cassandra_config_file'), instances=instances)
+        self.service.start_cassandra(instances=instances)
 
     def print_ring(self, argv, options_dict):
         instances = self.service.get_instances()
@@ -259,7 +245,9 @@ where COMMAND and [OPTIONS] may be one of:
         idx = 0
         if len(argv) > 0 :
             idx = int(argv[0])
-        self.service.print_ring(options_dict.get('ssh_options'), instances[idx])
+
+        retcode, output = self.service.print_ring(instances[idx], return_output=True)
+        print output
 
     def hack_config_for_multi_region(self, argv, options_dict):
         instances = self.service.get_instances()
@@ -279,7 +267,7 @@ where COMMAND and [OPTIONS] may be one of:
             sys.exit(1)
 
         opt, args = self.parse_options(self._command_name, argv, [make_option("--offset", metavar="OFFSET", action="store", type=int, default=0, help="token offset")])
-        self.service.rebalance(options_dict.get('ssh_options'), offset=opt['offset'])
+        self.service.rebalance(offset=opt['offset'])
 
     def remove_down_nodes(self, argv, options_dict):
         instances = self.service.get_instances()
@@ -287,7 +275,7 @@ where COMMAND and [OPTIONS] may be one of:
             print "No running instances. Aborting."
             sys.exit(1)
 
-        self.service.remove_down_nodes(options_dict.get('ssh_options'))
+        self.service.remove_down_nodes()
 
     def create_storage(self, argv, options_dict):
         opt, args = self.parse_options(self._command_name, argv, BASIC_OPTIONS,
