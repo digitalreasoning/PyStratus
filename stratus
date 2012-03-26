@@ -342,6 +342,7 @@ def list_clusters(options_dict, list_all=False):
 
     table = PrettyTable()
     table.set_field_names([""]+[column[0] for column in LIST_CLUSTERS_COLUMNS])
+    table.set_field_align(LIST_CLUSTERS_COLUMNS[0][0], 'l')
 
     sortby = options_dict.get('sortby', 'instances')
     valid_sort_values = [c[1] for c in LIST_CLUSTERS_COLUMNS]
