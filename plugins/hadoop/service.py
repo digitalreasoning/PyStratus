@@ -11,6 +11,7 @@ import socket
 import re
 
 from fabric.api import *
+from fabric.contrib import files
 from fabric.state import output
 
 from cloud.cluster import TimeoutException
@@ -18,6 +19,7 @@ from cloud.service import InstanceTemplate
 from cloud.plugin import ServicePlugin 
 from cloud.util import xstr
 from cloud.util import url_get
+from cloud.decorators import timeout
 
 # fabric output settings
 output.running = False
@@ -340,9 +342,9 @@ class HadoopService(ServicePlugin):
         self.cluster.authorize_role(self.JOBTRACKER, 8021, 8021,
                                     "%s/32" % jobtracker_ip)
 
-    def _wait_for_hadoop(self, number, timeout=600):
+    @timeout(600)
+    def _wait_for_hadoop(self, number):
         wait_time = 3
-        start_time = time.time()
         jobtracker = self.get_jobtracker()
         if not jobtracker:
             self.logger.debug("No jobtracker found")
@@ -351,8 +353,6 @@ class HadoopService(ServicePlugin):
         self.logger.debug("Waiting for jobtracker to start...")
         previous_running = 0
         while True:
-            if (time.time() - start_time >= timeout):
-                raise TimeoutException()
             try:
                 actual_running = self._number_of_tasktrackers(jobtracker.public_dns_name, 1)
                 break
@@ -365,8 +365,6 @@ class HadoopService(ServicePlugin):
             while actual_running < number:
                 self.logger.debug("actual_running: %s" % actual_running)
                 self.logger.debug("number: %s" % number)
-                if (time.time() - start_time >= timeout):
-                    raise TimeoutException()
                 try:
                     actual_running = self._number_of_tasktrackers(jobtracker.public_dns_name, 5, 2)
                     self.logger.debug("Sleeping for %d seconds..." % wait_time)
@@ -410,12 +408,15 @@ class HadoopService(ServicePlugin):
         
         return process.pid
 
-    def _daemon_control(self, instance, service, daemon, action, ssh_options, as_user="hadoop"):
-        command = "su -s /bin/bash - %s -c \"%s-daemon.sh %s %s\"" % (as_user, service, action, daemon)
-        ssh_command = self._get_standard_ssh_command(instance, ssh_options, command)
-        subprocess.call(ssh_command, shell=True)
+    def _daemon_control(self, instance, service, daemon, action, as_user="hadoop"):
+        #command = "su -s /bin/bash - %s -c \"%s-daemon.sh %s %s\"" % (as_user, service, action, daemon)
+        #ssh_command = self._get_standard_ssh_command(instance, ssh_options, command)
+        #subprocess.call(ssh_command, shell=True)
+        with settings(host_string=instance.public_dns_name): #hide("everything"):
+            print sudo("su -s /bin/bash - %s -c '%s-daemon.sh %s %s'" % (as_user, service, action, daemon))
+            #print sudo("%s-daemon.sh %s %s" % (service, action, daemon), user=as_user)
 
-    def stop_hadoop(self, ssh_options, as_user="hadoop"):
+    def stop_hadoop(self, as_user="hadoop"):
         namenode = self.get_namenode()
         if namenode is None:
             self.logger.error("No namenode running. Aborting.")
@@ -430,17 +431,17 @@ class HadoopService(ServicePlugin):
         i = 1
         for datanode in datanodes:
             print "Stopping datanode #%d processes..." % i
-            self._daemon_control(datanode, "hadoop", "tasktracker", "stop", ssh_options, as_user=as_user)
-            self._daemon_control(datanode, "hadoop", "datanode", "stop", ssh_options, as_user=as_user)
+            self._daemon_control(datanode, "hadoop", "tasktracker", "stop", as_user=as_user)
+            self._daemon_control(datanode, "hadoop", "datanode", "stop", as_user=as_user)
             i += 1
 
         # kill namenode processes
         print "Stopping namenode processes..."
-        self._daemon_control(namenode, "hadoop", "jobtracker", "stop", ssh_options, as_user=as_user)
-        self._daemon_control(namenode, "hadoop", "secondarynamenode", "stop", ssh_options, as_user=as_user)
-        self._daemon_control(namenode, "hadoop", "namenode", "stop", ssh_options, as_user=as_user)
+        self._daemon_control(namenode, "hadoop", "jobtracker", "stop", as_user=as_user)
+        self._daemon_control(namenode, "hadoop", "secondarynamenode", "stop", as_user=as_user)
+        self._daemon_control(namenode, "hadoop", "namenode", "stop", as_user=as_user)
 
-    def start_hadoop(self, ssh_options, as_user="hadoop"):
+    def start_hadoop(self, as_user="hadoop"):
         namenode = self.get_namenode()
         if namenode is None:
             self.logger.error("No namenode running. Aborting.")
@@ -453,19 +454,31 @@ class HadoopService(ServicePlugin):
 
         # start namenode processes
         print "Starting namenode processes..."
-        self._daemon_control(namenode, "hadoop", "jobtracker", "start", ssh_options, as_user=as_user)
-        self._daemon_control(namenode, "hadoop", "secondarynamenode", "start", ssh_options, as_user=as_user)
-        self._daemon_control(namenode, "hadoop", "namenode", "start", ssh_options, as_user=as_user)
+
+        # make sure PID directory exists and permissions are right
+        with settings(host_string=namenode.public_dns_name):
+            sudo("mkdir -p /var/run/hadoop")
+            sudo("chown -R %s:%s /var/run/hadoop" % (as_user, as_user))
+
+        self._daemon_control(namenode, "hadoop", "jobtracker", "start", as_user=as_user)
+        self._daemon_control(namenode, "hadoop", "secondarynamenode", "start", as_user=as_user)
+        self._daemon_control(namenode, "hadoop", "namenode", "start", as_user=as_user)
 
         # start processes on data node
         i = 1
         for datanode in datanodes:
             print "Starting datanode #%d processes..." % i
-            self._daemon_control(datanode, "hadoop", "tasktracker", "start", ssh_options, as_user=as_user)
-            self._daemon_control(datanode, "hadoop", "datanode", "start", ssh_options, as_user=as_user)
+
+            # make sure PID directory exists and permissions are right
+            with settings(host_string=datanode.public_dns_name), hide("everything"):
+                sudo("mkdir -p /var/run/hadoop")
+                sudo("chown -R %s:%s /var/run/hadoop" % (as_user, as_user))
+
+            self._daemon_control(datanode, "hadoop", "tasktracker", "start", as_user=as_user)
+            self._daemon_control(datanode, "hadoop", "datanode", "start", as_user=as_user)
             i += 1
 
-    def stop_hbase(self, ssh_options, as_user="hadoop"):
+    def stop_hbase(self, as_user="hadoop"):
         namenode = self.get_namenode()
         if namenode is None:
             self.logger.error("No namenode running. Aborting.")
@@ -480,15 +493,15 @@ class HadoopService(ServicePlugin):
         i = 1
         for datanode in datanodes:
             print "Stopping datanode #%d processes..." % i
-            self._daemon_control(datanode, "hbase", "regionserver", "stop", ssh_options, as_user=as_user)
+            self._daemon_control(datanode, "hbase", "regionserver", "stop", as_user=as_user)
             i += 1
 
         # kill namenode processes
         print "Stopping namenode processes..."
-        self._daemon_control(namenode, "hbase", "zookeeper", "stop", ssh_options, as_user=as_user)
-        self._daemon_control(namenode, "hbase", "master", "stop", ssh_options, as_user=as_user)
+        self._daemon_control(namenode, "hbase", "zookeeper", "stop", as_user=as_user)
+        self._daemon_control(namenode, "hbase", "master", "stop", as_user=as_user)
 
-    def start_hbase(self, ssh_options, as_user="hadoop"):
+    def start_hbase(self, as_user="hadoop"):
         namenode = self.get_namenode()
         if namenode is None:
             self.logger.error("No namenode running. Aborting.")
@@ -501,14 +514,26 @@ class HadoopService(ServicePlugin):
 
         # start namenode processes
         print "Starting namenode processes..."
-        self._daemon_control(namenode, "hbase", "zookeeper", "start", ssh_options, as_user=as_user)
-        self._daemon_control(namenode, "hbase", "master", "start", ssh_options, as_user=as_user)
+
+        # make sure PID directory exists and permissions are right
+        #with settings(host_string=namenode.public_dns_name):
+        #    sudo("mkdir -p /var/run/hadoop")
+        #    sudo("chown -R %s:%s /var/run/hadoop" % (as_user, as_user))
+
+        self._daemon_control(namenode, "hbase", "zookeeper", "start", as_user=as_user)
+        self._daemon_control(namenode, "hbase", "master", "start", as_user=as_user)
 
         # start processes on data node
         i = 1
         for datanode in datanodes:
             print "Starting datanode #%d processes..." % i
-            self._daemon_control(datanode, "hbase", "regionserver", "start", ssh_options, as_user=as_user)
+
+            # make sure PID directory exists and permissions are right
+            #with settings(host_string=datanode.public_dns_name), hide("everything"):
+            #    sudo("mkdir -p /var/run/hadoop")
+            #    sudo("chown -R %s:%s /var/run/hadoop" % (as_user, as_user))
+
+            self._daemon_control(datanode, "hbase", "regionserver", "start", as_user=as_user)
             i += 1
 
     def _wrap_user(self, cmd, as_user):
@@ -523,7 +548,7 @@ class HadoopService(ServicePlugin):
         tmpfile.file.flush()
         return tmpfile
 
-    def start_cloudbase(self, ssh_options, options, as_user="hadoop", ssh_user="root"):
+    def start_cloudbase(self, options, as_user="hadoop", ssh_user="root"):
 
         namenode = self.get_namenode()
         if not namenode:

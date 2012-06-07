@@ -20,9 +20,10 @@ import logging
 import os
 import types
 import sys
+import boto
+import paramiko
 import logging
 import logging.config
-import boto
 
 from cloud.cluster import get_cluster
 from cloud.service import get_service
@@ -41,6 +42,7 @@ from cloud import VERSION
 from cloud.settings import SERVICE_PROVIDER_MAP
 
 from fabric.api import *
+env.warn_only = True
 
 DEFAULT_CLOUD_PROVIDER = 'ec2'
 DEFAULT_REGION = 'us-east-1'
@@ -100,7 +102,7 @@ SNAPSHOT_OPTIONS = BASIC_OPTIONS[:] + [
     help="The key pair to use when launching instances."),
   make_option("-p", "--private-key", metavar="PRIVATE-KEY",
     help="The private key for SSH commands."),
-  make_option("--ssh-user", metavar="SSH-USER",
+  make_option("--ssh-user", metavar="SSH-USER", default="root",
     help="SSH user to use."),
 ]
 
@@ -163,6 +165,10 @@ def parse_options_and_config(command, option_list=[], expected_arguments=("CLUST
                                        unbounded_args, description=description)
 
   config, config_dir = load_config(options_dict)
+
+  if command == "delete-security-groups":
+      return options_dict, args
+
   cluster_name = args[0]
   if not config.has_section(cluster_name):
       logging.warn("No cluster named '%s' found configured.  See documentation on github for more information." % cluster_name)
@@ -521,10 +527,10 @@ def main():
         list_storage(options_dict)
 
     elif command == 'delete-security-groups':
-        (options_dict, args, _) = parse_options_and_config(command, DELETE_SECURITY_GROUPS_OPTIONS,
-                                             expected_arguments=("FILTERS ...",),
-                                             unbounded_args=True,
-                                             description="Delete the security group matching the given filter(s)")
+        options_dict, args = parse_options_and_config(command, DELETE_SECURITY_GROUPS_OPTIONS,
+                                                      expected_arguments=("FILTERS ...",),
+                                                      unbounded_args=True,
+                                                      description="Delete the security group matching the given filter(s)")
 
         delete_security_groups(args, force=options_dict['force'])
 
@@ -564,6 +570,9 @@ required options)."""
         ssh_user = options_dict.get('ssh_user')
         ssh_options = '-l %s -i %s -o StrictHostKeyChecking=no' % (ssh_user, private_key)
 
+        env.user = ssh_user
+        env.key_filename = [options_dict.get("private_key")]
+
         # which AMI to use
         if ami is None:
             if region == 'us-east-1':
@@ -593,6 +602,10 @@ if __name__ == "__main__":
     if os.path.isfile(log_config):
         logging.config.fileConfig(log_config)
     logging.getLogger(__file__).info("\n"+"*"*65 + "\nSTRATUS STARTED\n" + "*"*65)
+
+    # change log level of paramiko
+    plogger = logging.getLogger("paramiko")
+    plogger.setLevel(logging.WARN)
 
     # load the plugins after logging is set up 
     plugin_manager = PluginManager(categories_filter=dict(

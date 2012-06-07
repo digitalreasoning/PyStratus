@@ -325,6 +325,7 @@ class Ec2Cluster(Cluster):
 
         if not ssh_available(env.user, env.key_filename, instance.public_dns_name):
             logging.info("SSH unavailable...")
+            logging.info("User=%s; Host=%s; Key=%s" % (env.user, instance.public_dns_name, env.key_filename))
             return False
 
     return True
