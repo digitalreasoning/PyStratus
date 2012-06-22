@@ -1,7 +1,7 @@
 boto==2.0
 python-dateutil==1.5
 simplejson
-prettytable
+prettytable==0.5
 yapsy
 fabric
 PyYAML
