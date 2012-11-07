@@ -413,8 +413,8 @@ class HadoopService(ServicePlugin):
         #ssh_command = self._get_standard_ssh_command(instance, ssh_options, command)
         #subprocess.call(ssh_command, shell=True)
         with settings(host_string=instance.public_dns_name): #hide("everything"):
-            print sudo("su -s /bin/bash - %s -c '%s-daemon.sh %s %s'" % (as_user, service, action, daemon))
-            #print sudo("%s-daemon.sh %s %s" % (service, action, daemon), user=as_user)
+            #print sudo("su -s /bin/bash - %s -c '%s-daemon.sh %s %s'" % (as_user, service, action, daemon))
+            print sudo("%s-daemon.sh %s %s" % (service, action, daemon), user=as_user)
 
     def stop_hadoop(self, as_user="hadoop"):
         namenode = self.get_namenode()
@@ -492,7 +492,8 @@ class HadoopService(ServicePlugin):
         # kill processes on data node
         i = 1
         for datanode in datanodes:
-            print "Stopping datanode #%d processes..." % i
+            print "Stopping regionserver #%d processes..." % i
+            print "user = %s" % as_user
             self._daemon_control(datanode, "hbase", "regionserver", "stop", as_user=as_user)
             i += 1
 

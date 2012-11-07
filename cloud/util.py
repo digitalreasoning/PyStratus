@@ -24,6 +24,7 @@ import ConfigParser
 import socket
 import urllib2
 import paramiko
+import logging
 
 from subprocess import Popen, PIPE, CalledProcessError
 from boto.ec2 import regions as EC2Regions
@@ -178,4 +179,12 @@ def ssh_available(user, private_key, host, port=22, timeout=10):
         )
         return True
     except Exception, e:
+        logging.warn(e)
         return False
+
+def exec_command(cmd, **kwargs):
+    c = sudo if use_sudo() else run
+    return c(cmd, **kwargs)
+
+def use_sudo():
+    return env.user != "root"

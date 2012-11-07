@@ -12,6 +12,8 @@ from fabric.contrib import files
 from cloud.cluster import TimeoutException
 from cloud.service import InstanceTemplate
 from cloud.plugin import ServicePlugin 
+from cloud.util import exec_command
+from cloud.util import use_sudo
 from cloud.util import xstr
 from cloud.util import check_output
 from cloud.util import FULL_HIDE
@@ -186,6 +188,17 @@ class CassandraService(ServicePlugin):
         if tokens == None :
             tokens = self._get_evenly_spaced_tokens_for_n_instances(len(instances))
 
+        # wait for all instances to be ready
+        print "WAITING FOR ALL INSTANCES"
+        while all_instances:
+            i = all_instances[-1]
+            home = get_cassandra_home(i)
+            print home
+
+            if home == "":
+                continue
+            all_instances.pop()
+
         # for each instance, generate a config file from the original file and upload it to
         # the cluster node
         for i, instance in enumerate(instances):
@@ -207,7 +220,7 @@ class CassandraService(ServicePlugin):
         with settings(host_string=instance.public_dns_name, warn_only=True):
             with FULL_HIDE:
                 try:
-                    while not files.exists("/var/run/cassandra.pid", use_sudo=True):
+                    while not files.exists("/var/run/cassandra.pid", use_sudo=use_sudo()):
                         self.logger.debug("Sleeping for %d seconds..." % wait_time)
                         time.sleep(wait_time)
                 # catch SystemExit because paramiko will call abort when it detects a failure
@@ -217,27 +230,28 @@ class CassandraService(ServicePlugin):
 
     def _configure_cassandra_instance(self, instance, seed_ips, token, set_tokens=True, auto_bootstrap=False):
         self.logger.debug("Configuring %s..." % instance.id)
-        temp_dir = tempfile.mkdtemp()
-        temp_file = os.path.join(temp_dir, "cassandra.yaml")
+        yaml_file = os.path.join("/tmp", "cassandra.yaml")
+        cassandra_home = self.get_cassandra_home(instance)
 
-        self.logger.debug("Temp file: %s" % temp_file)
-        with settings(host_string=instance.public_dns_name, warn_only=True), hide("everything"):
+        self.logger.debug("Local cassandra.yaml file: %s" % yaml_file)
+        with settings(host_string=instance.public_dns_name, warn_only=True): #, hide("everything"):
+
+            cassandra_data = os.path.join("/mnt", "cassandra-data")
+            cassandra_logs = os.path.join("/mnt", "cassandra-logs")
+
             # create directories and log files
-            sudo("mkdir -p /mnt/cassandra-data")
-            sudo("mkdir -p /mnt/cassandra-logs")
-            sudo("touch /var/log/cassandra/output.log")
-            sudo("touch /var/log/cassandra/system.log")
+            exec_command("mkdir -p %s" % cassandra_data)
+            exec_command("mkdir -p %s" % cassandra_logs)
 
             # set permissions
-            sudo("chown -R cassandra:cassandra /mnt/cassandra-*")
-            sudo("chown -R cassandra:cassandra /var/log/cassandra")
+            exec_command("chown -R cassandra:cassandra %s %s" % (cassandra_data, cassandra_logs))
 
             try:
                 # get yaml file
-                get("/etc/cassandra/cassandra.yaml", temp_file)
+                get(os.path.join(cassandra_home, "conf", "cassandra.yaml"), "/tmp")
 
                 # modify it
-                f = open(temp_file)
+                f = open(yaml_file)
                 yaml = parse_yaml(f)
                 f.close()
 
@@ -246,22 +260,22 @@ class CassandraService(ServicePlugin):
                     yaml['initial_token'] = token
                 if auto_bootstrap :
                     yaml['auto_bootstrap'] = 'true'
-                yaml['data_file_directories'] = ['/mnt/cassandra-data']
-                yaml['commitlog_directory'] = '/mnt/cassandra-logs'
+                yaml['data_file_directories'] = [cassandra_data]
+                yaml['commitlog_directory'] = cassandra_logs
                 yaml['listen_address'] = str(instance.private_dns_name)
                 yaml['rpc_address'] = str(instance.public_dns_name)
 
-                f = open(temp_file, "w")
+                f = open(yaml_file, "w")
                 f.write(dump_yaml(yaml))
                 f.close()
 
                 # put modified yaml file
-                put(temp_file, "/etc/cassandra/cassandra.yaml", use_sudo=True)
+                put(yaml_file, os.path.join(cassandra_home, "conf", "cassandra.yaml"), use_sudo=use_sudo())
             except SystemExit, e:
                 raise
                 pass
 
-        os.unlink(temp_file)
+        os.unlink(yaml_file)
 
     def hack_config_for_multi_region(self, ssh_options, seeds):
         instances = self.get_instances()
@@ -287,7 +301,7 @@ class CassandraService(ServicePlugin):
 
                 #upload config file
                 print "uploading new config to %s" % instance.public_dns_name
-                put(temp_file, "/etc/cassandra/cassandra.yaml", use_sudo=True)
+                put(temp_file, "/etc/cassandra/cassandra.yaml", use_sudo=use_sudo())
 
                 os.unlink(temp_file)
                 os.unlink(downloaded_file)
@@ -305,42 +319,37 @@ class CassandraService(ServicePlugin):
         else:
             raise Exception("Configuration file must be on of xml or yaml")
 
-    def print_ring(self, instance=None, return_output=False):
+    def print_ring(self, instance=None):
         # check to see if cassandra is running
-        with settings(host_string=instance.public_dns_name, warn_only=True), hide("everything"):
-            result = sudo("service cassandra status")
-
-        if result.failed:
-            return result.return_code, "Cassandra does not appear to be running."
+        if not self.is_running(instance):
+            return "Cassandra does not appear to be running."
 
         print "\nRing configuration..."
         print "NOTE: May not be accurate if the cluster just started or expanded.\n"
-        return self._run_nodetool("ring", instance, return_output=return_output)
+        return self._run_nodetool("ring", instance)
 
-    def _run_nodetool(self, ntcommand, instance=None, return_output=False):
+    def _run_nodetool(self, ntcommand, instance=None):
         if instance is None:
             instance = self.get_instances()[0]
 
         self.logger.debug("running nodetool on instance %s", instance.id)
         with settings(host_string=instance.public_dns_name, warn_only=True), hide("everything"):
-            output = sudo("nodetool -h %s %s" % (instance.private_dns_name, ntcommand))
-        if return_output:
-            return (output.return_code, output)
-        else:
-            return output.return_code
+            output = exec_command("nodetool -h %s %s" % (instance.private_dns_name, ntcommand))
+
+        return output
 
     def _discover_ring(self, instance=None):
         if instance is None:
             instance = self.get_instances()[0]
 
         with settings(host_string=instance.public_dns_name, warn_only=True), hide("everything"):
-            status = sudo("service cassandra status")
+            status = exec_command("service cassandra status")
 
             if status.failed:
                 raise RuntimeException("Cassandra does not appear to be running.")
 
             self.logger.debug("Discovering ring...")
-            retcode, output = self._run_nodetool("ring", instance, return_output=True)
+            retcode, output = self._run_nodetool("ring", instance)
             self.logger.debug("node tool output:\n%s" % output)
             lines = output.split("\n")[2:]
 
@@ -379,7 +388,7 @@ class CassandraService(ServicePlugin):
         for i, instance in enumerate(instances):
             token = str(int(tokens[i]) + offset)
             self.logger.info("Moving instance %s to token %s" % (instance.id, token))
-            retcode, output = self._run_nodetool("move %s" % token, instance=instance, return_output=True)
+            retcode, output = self._run_nodetool("move %s" % token, instance=instance)
             if retcode != 0 :
                 self.logger.warn("Move failed for instance %s with return code %d..." % (instance.id, retcode))
                 self.logger.warn(output)
@@ -391,7 +400,7 @@ class CassandraService(ServicePlugin):
         Run nodetool to verify that a ring is valid.
         """
 
-        ring_output = sudo("nodetool --host %s ring" % instance.private_dns_name)
+        ring_output = exec_command("nodetool --host %s ring" % instance.private_dns_name)
 
         if ring_output.failed:
             return ring_output.return_code
@@ -438,29 +447,31 @@ class CassandraService(ServicePlugin):
             instances = self.get_instances()
 
         for instance in instances:
-            with settings(host_string=instance.public_dns_name, warn_only=True), hide("everything"):
+            with settings(host_string=instance.public_dns_name, warn_only=True): #, hide("everything"):
                 errors = -1
                 self.logger.info("Starting Cassandra service on %s..." % instance.id)
 
                 while True:
                     try:
                         # check to see if cassandra is running
-                        result = sudo("service cassandra status")
-                        if result.failed:
-                            # start it if this is the first time
-                            if errors < 0:
-                                self.logger.info("Cassandra is not running. Attempting to start now...")
-                                sudo("service cassandra start")
-                            elif errors >= 5:
-                                #tail = sudo("tail -n 50 /var/log/cassandra/output.log")
-                                #self.logger.error(tail)
-                                raise RuntimeError("Unable to start cassandra. Check the logs for more information.")
-                            self.logger.info("Error detecting Cassandra status...will try again in 3 seconds.")
-                            errors += 1
-                            time.sleep(3)
-                        else:
+
+                        if self.is_running(instance):
                             self.logger.info("Cassandra is running.")
                             break
+
+                        # start it if this is the first time
+                        if errors < 0:
+                            self.logger.info("Cassandra is not running. Attempting to start now...")
+                            print("Cassandra is not running. Attempting to start now...")
+                            exec_command("service cassandra start", pty=False)
+                        elif errors >= 5:
+                            #tail = sudo("tail -n 50 /var/log/cassandra/output.log")
+                            #self.logger.error(tail)
+                            raise RuntimeError("Unable to start cassandra. Check the logs for more information.")
+                        self.logger.info("Error detecting Cassandra status...will try again in 3 seconds.")
+                        errors += 1
+                        time.sleep(3)
+
                     except SystemExit, e:
                         self.logger.error(str(e))
 
@@ -476,13 +487,13 @@ class CassandraService(ServicePlugin):
                 ring_retcode = self._validate_ring(instance)
 
                 # is gossip running?
-                gossip_retcode = sudo("nodetool -h %s info | grep Gossip | grep true" % instance.private_dns_name).return_code
+                gossip_retcode = exec_command("nodetool -h %s info | grep Gossip | grep true" % instance.private_dns_name).return_code
 
                 # are the netstats looking ok?
-                netstats_retcode = sudo("nodetool -h %s netstats | grep 'Mode: NORMAL'" % instance.private_dns_name).return_code
+                netstats_retcode = exec_command("nodetool -h %s netstats | grep 'Mode: NORMAL'" % instance.private_dns_name).return_code
 
                 # is thrift running?
-                thrift_retcode = sudo("/bin/netstat -an | grep 9160").return_code
+                thrift_retcode = exec_command("/bin/netstat -an | grep 9160").return_code
 
                 if ring_retcode == 0 and gossip_retcode == 0 and netstats_retcode == 0 and thrift_retcode == 0:
                     temp_instances.pop()
@@ -500,8 +511,7 @@ class CassandraService(ServicePlugin):
 
         # print ring after everything started
         if print_ring:
-            retcode, output = self.print_ring(instances[0], return_output=True)
-            print output
+            print self.print_ring(instances[0])
 
         self.logger.debug("Startup complete.")
 
@@ -512,7 +522,31 @@ class CassandraService(ServicePlugin):
         for instance in instances:
             self.logger.info("Stopping Cassandra on %s" % instance.id)
             with settings(host_string=instance.public_dns_name, warn_only=True), hide("everything"):
-                result = sudo("service cassandra stop")
+                result = exec_command("service cassandra stop")
                 self.logger.info(result)
 
         self.logger.debug("Shutdown complete.")
+
+    def get_cassandra_pid(self, instance):
+        with settings(host_string=instance.public_dns_name, warn_only=True):
+            pid = exec_command("cat /var/run/cassandra.pid")
+            if pid.failed:
+                return None
+            return pid
+
+    def is_running(self, instance):
+        with settings(host_string=instance.public_dns_name), hide("everything"):
+            return "is running" in exec_command("service cassandra status")
+
+        #pid = self.get_cassandra_pid(instance)
+        #if pid is None:
+        #    return False
+        #
+        #with settings(host_string=instance.public_dns_name, warn_only=True):
+        #    return exec_command("ps auxw | grep -v grep | grep %s" % pid).succeeded
+        
+
+    def get_cassandra_home(self, instance):
+        with settings(host_string=instance.public_dns_name, warn_only=True):
+            return exec_command("echo $CASSANDRA_HOME")
+        

@@ -239,15 +239,14 @@ where COMMAND and [OPTIONS] may be one of:
     def print_ring(self, argv, options_dict):
         instances = self.service.get_instances()
         if not instances:
-            print "No running instances. Aborting."
+            print("No running instances. Aborting.")
             sys.exit(1)
 
         idx = 0
         if len(argv) > 0 :
             idx = int(argv[0])
 
-        retcode, output = self.service.print_ring(instances[idx], return_output=True)
-        print output
+        print(self.service.print_ring(instances[idx]))
 
     def hack_config_for_multi_region(self, argv, options_dict):
         instances = self.service.get_instances()
@@ -294,4 +293,3 @@ where COMMAND and [OPTIONS] may be one of:
                                     opt.get('availability_zone'),
                                     spec_file)
         self.print_storage()
-
