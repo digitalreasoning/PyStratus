@@ -404,8 +404,7 @@ where COMMAND and [OPTIONS] may be one of:
         opt.update(options_dict)
 
         print "Starting hadoop..."
-        self.service.start_hadoop(options_dict.get("ssh_options"),
-                                  options_dict.get("hadoop_user", "hadoop"))
+        self.service.start_hadoop(options_dict.get("hadoop_user", "hadoop"))
 
     def stop_hadoop(self, argv, options_dict):
         """Stop the various processes on the namenode and slave nodes"""
@@ -430,8 +429,7 @@ where COMMAND and [OPTIONS] may be one of:
         opt.update(options_dict)
 
         print "Stopping hadoop..."
-        self.service.stop_hadoop(options_dict.get("ssh_options"),
-                                 options_dict.get("hadoop_user", "hadoop"))
+        self.service.stop_hadoop(options_dict.get("hadoop_user", "hadoop"))
 
     def start_hbase(self, argv, options_dict):
         """Start the various hbase processes on the namenode and slave nodes"""
@@ -440,8 +438,7 @@ where COMMAND and [OPTIONS] may be one of:
         opt.update(options_dict)
 
         print "Starting hbase..."
-        self.service.start_hbase(options_dict.get("ssh_options"),
-                                  options_dict.get("hadoop_user", "hadoop"))
+        self.service.start_hbase(options_dict.get("hadoop_user", "hadoop"))
 
     def stop_hbase(self, argv, options_dict):
         """Stop the various hbase processes on the namenode and slave nodes"""
@@ -466,8 +463,7 @@ where COMMAND and [OPTIONS] may be one of:
         opt.update(options_dict)
 
         print "Stopping hbase..."
-        self.service.stop_hbase(options_dict.get("ssh_options"),
-                                 options_dict.get("hadoop_user", "hadoop"))
+        self.service.stop_hbase(options_dict.get("hadoop_user", "hadoop"))
 
     def get_config_files(self, argv, options_dict):
         """

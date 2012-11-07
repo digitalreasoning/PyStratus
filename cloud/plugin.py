@@ -309,12 +309,11 @@ class ServicePlugin(object):
         else:
             storage.print_status()
 
-    def _get_standard_ssh_command(self, instance, ssh_options, remote_command=None, username="root"):
+    def _get_standard_ssh_command(self, instance, ssh_options, remote_command=None):
         """
         Returns the complete SSH command ready for execution on the instance.
         """
-        cmd = "ssh %s %s@%s" % (xstr(ssh_options), username,
-                                       instance.public_dns_name)
+        cmd = "ssh %s %s" % (xstr(ssh_options), instance.public_dns_name)
         
         if remote_command is not None:
             cmd += " '%s'" % remote_command
@@ -394,7 +393,7 @@ class ServicePlugin(object):
         return zip(instances, retcodes)
 
     def _get_transfer_command(self, instance, file_name, ssh_options):
-        transfer_command = "scp %s %s root@%s:" % (xstr(ssh_options), file_name, instance.public_dns_name)
+        transfer_command = "scp %s %s %s:" % (xstr(ssh_options), file_name, instance.public_dns_name)
 #        transfer_command = self._get_standard_ssh_command(instance, ssh_options, "cat > %s" % file_name) + " < %s" % file_name
         self.logger.debug("Transfer command: %s" % transfer_command)
         return transfer_command
@@ -407,3 +406,8 @@ class ServicePlugin(object):
         procs = [subprocess.Popen(ssh_command, shell=True) for ssh_command in ssh_commands]
         retcodes = [proc.wait() for proc in procs]
         return [(operation[0], operation[1], retcode) for operation, retcode in zip(operations, retcodes)]
+
+    def login(self, instance, ssh_options):
+        ssh_command = self._get_standard_ssh_command(instance, ssh_options)
+        subprocess.call(ssh_command, shell=True)
+    
