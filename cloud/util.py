@@ -49,7 +49,7 @@ def bash_quote_env(env):
   """Quotes the value in an environment variable assignment."""
   if env.find("=") == -1:
     return env
-  (var, value) = env.split("=")
+  (var, value) = env.split("=", 1)
   return "%s=%s" % (var, bash_quote(value))
 
 def build_env_string(env_strings=[], pairs={}):
