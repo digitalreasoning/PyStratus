@@ -2,7 +2,7 @@ boto==2.0
 python-dateutil==1.5
 simplejson
 prettytable==0.5
-yapsy
+yapsy==1.8
 fabric
 PyYAML
 elementTree
