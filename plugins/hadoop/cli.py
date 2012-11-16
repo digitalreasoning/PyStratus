@@ -250,9 +250,8 @@ where COMMAND and [OPTIONS] may be one of:
 
             #log in to the master and run a startup script
             print "Provider is cloudbase - starting cloudbase processes ... please wait"
-            self.service.start_cloudbase(options_dict.get("ssh_options"),
-                options_dict,
-                options_dict.get("hadoop_user", "hadoop"),
+            self.service.start_cloudbase(options_dict,
+                options_dict.get("hadoop_user", "hadoop"), 
                 options_dict.get("ssh_user", "root"))
             
         print "Finished - browse the cluster at http://%s/" % master.public_dns_name
@@ -383,8 +382,7 @@ where COMMAND and [OPTIONS] may be one of:
         opt, args = self.parse_options(self._command_name, argv, BASIC_OPTIONS)
         opt.update(options_dict)
 
-        self.service.start_cloudbase(options_dict.get("ssh_options"),
-            options_dict, 
+        self.service.start_cloudbase(options_dict,
             options_dict.get("hadoop_user", "hadoop"), 
             options_dict.get("ssh_user", "root"))
 
