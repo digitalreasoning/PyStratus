@@ -50,7 +50,7 @@ class InstanceTemplate(object):
                      key_name, public_key,
                      user_data_file_template=None, placement=None,
                      user_packages=None, auto_shutdown=None, env_strings=[],
-                     security_groups=[]):
+                     security_groups=[], spot_config=None):
     self.roles = roles
     self.number = number
     self.image_id = image_id
@@ -63,6 +63,7 @@ class InstanceTemplate(object):
     self.auto_shutdown = auto_shutdown
     self.env_strings = env_strings
     self.security_groups = security_groups
+    self.spot_config = spot_config
 
     t = type(self.security_groups)
     if t is types.NoneType:

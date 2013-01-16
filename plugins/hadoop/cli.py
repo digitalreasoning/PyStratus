@@ -73,6 +73,14 @@ where COMMAND and [OPTIONS] may be one of:
         # strip off the cluster name and command from argv
         argv = argv[2:]
 
+        # get spot configuration
+        self._spot_config = {
+                "spot_cluster": True if os.environ.get("SPOT_CLUSTER", options_dict.get("spot_cluster", "false")).lower() == "true" else False,
+                "master_spot": True if options_dict.get("master_spot", "false").lower() == "true" else False,
+                "max_price": options_dict.get("max_price", None),
+                "launch_group": options_dict.get("launch_group", None),
+            }
+
         # handle all known commands and error on an unknown command
         if self._command_name == "details":
             self.print_instances()
@@ -163,6 +171,14 @@ where COMMAND and [OPTIONS] may be one of:
         # anything in the clusters.cfg; hbase is the default if nothing is set
         provider = os.environ.get("PROVIDER", opt.get("provider", "hbase")).lower()
 
+        # default for spot clusters is for the master to NOT be spot; munging
+        # some things around here if the opposite is specified
+        spot_cluster_orig = self._spot_config["spot_cluster"]
+        if spot_cluster_orig and self._spot_config["master_spot"]:
+            self._spot_config["spot_cluster"] = True
+        else:
+            self._spot_config["spot_cluster"] = False
+
         number_of_slaves = int(args[0])
         master_templates = [
             InstanceTemplate(
@@ -181,7 +197,8 @@ where COMMAND and [OPTIONS] may be one of:
                 opt.get('user_packages'),
                 opt.get('auto_shutdown'), 
                 opt.get('env'),
-                opt.get('security_groups'))
+                opt.get('security_groups'),
+                self._spot_config)   # don't want the master to be a spot instance
         ]
         for it in master_templates:
             it.add_env_strings([
@@ -205,6 +222,8 @@ where COMMAND and [OPTIONS] may be one of:
 
         print "Master now running at %s - starting slaves" % master.public_dns_name
 
+        self._spot_config["spot_cluster"] = spot_cluster_orig
+
         slave_templates = [
             InstanceTemplate(
                 (
@@ -221,7 +240,8 @@ where COMMAND and [OPTIONS] may be one of:
                 opt.get('user_packages'),
                 opt.get('auto_shutdown'),
                 opt.get('env'),
-                opt.get('security_groups'))
+                opt.get('security_groups'),
+                self._spot_config)
         ]
 
         for it in slave_templates:
@@ -270,7 +290,15 @@ where COMMAND and [OPTIONS] may be one of:
         else:
             provider.lower()
 
-        instance_templates = [
+        # default for spot clusters is for the master to NOT be spot; munging
+        # some things around here if the opposite is specified
+        spot_cluster_orig = self._spot_config["spot_cluster"]
+        if spot_cluster_orig and self._spot_config["master_spot"]:
+            self._spot_config["spot_cluster"] = True
+        else:
+            self._spot_config["spot_cluster"] = False
+
+        master_templates = [
             InstanceTemplate(
                 (
                     self.service.NAMENODE, 
@@ -287,7 +315,8 @@ where COMMAND and [OPTIONS] may be one of:
                 opt.get('user_packages'),
                 opt.get('auto_shutdown'), 
                 opt.get('env'),
-                opt.get('security_groups')),
+                opt.get('security_groups'),
+                self._spot_config)
             ]
 
         for it in master_templates:
@@ -296,7 +325,7 @@ where COMMAND and [OPTIONS] may be one of:
             ])
 
         print "Launching cluster master...please wait." 
-        jobtracker = self.service.launch_cluster(instance_templates, 
+        jobtracker = self.service.launch_cluster(master_templates, 
                                                  opt.get('client_cidr'),
                                                  opt.get('config_dir'))
 
@@ -344,7 +373,8 @@ where COMMAND and [OPTIONS] may be one of:
                 opt.get('user_packages'),
                 opt.get('auto_shutdown'),
                 opt.get('env'),
-                opt.get('security_groups')),
+                opt.get('security_groups'),
+                self._spot_config)
             ]
 
         # @todo - this is originally passed in when creating a cluster from

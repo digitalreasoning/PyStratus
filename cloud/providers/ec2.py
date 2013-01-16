@@ -293,11 +293,38 @@ class Ec2Cluster(Cluster):
     # create groups from config that may not exist
     self._create_custom_security_groups(security_groups)
 
-    reservation = self.ec2Connection.run_instances(image_id, min_count=number,
-      max_count=number, key_name=kwargs.get('key_name', None),
-      security_groups=security_groups, user_data=user_data,
-      instance_type=size_id, placement=kwargs.get('placement', None))
-    return [instance.id for instance in reservation.instances]
+    spot_config = kwargs.get("spot_config", None)
+
+    if spot_config and spot_config["spot_cluster"]:
+        print("Placing a spot instance bid")
+
+        max_price = spot_config.get("max_price", None)
+        launch_group = spot_config.get("launch_group", None)
+        if not max_price or not launch_group:
+            raise InvalidSpotConfigurationException("Must specify both max_price and launch_group")
+
+        # if we need to set these on a cluster-by-cluster basis we can pull
+        # them out into the config as well, but I think all we need is the above 
+        valid_from = None
+        valid_until = None
+        availability_zone_group = None
+        reservation_type = "one-time" 
+
+        results = self.ec2Connection.request_spot_instances(max_price, image_id, number, 
+            reservation_type, valid_from, valid_until, launch_group, availability_zone_group, key_name=kwargs.get('key_name', None),
+            security_groups=security_groups, user_data=user_data, instance_type=size_id, placement=kwargs.get('placement', None),
+            kernel_id=kwargs.get('kernel_id', None),
+            ramdisk_id=kwargs.get('ramdisk_i', None),
+            monitoring_enabled=kwargs.get('monitoring_enabled', False),
+            subnet_id=kwargs.get('subnet_id', None))     
+        return [instance_request.id for instance_request in results]
+
+    else:
+        reservation = self.ec2Connection.run_instances(image_id, min_count=number,
+            max_count=number, key_name=kwargs.get('key_name', None),
+            security_groups=security_groups, user_data=user_data,
+            instance_type=size_id, placement=kwargs.get('placement', None))
+        return [instance.id for instance in reservation.instances]
 
   @timeout(600)
   def wait_for_instances(self, instance_ids, fail_on_terminated=True):

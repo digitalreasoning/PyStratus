@@ -365,7 +365,8 @@ class ServicePlugin(object):
                                                      key_name=it.key_name,
                                                      public_key=it.public_key,
                                                      placement=it.placement,
-                                                     security_groups=it.security_groups)
+                                                     security_groups=it.security_groups, 
+                                                     spot_config=it.spot_config)
 
         self.logger.debug("Instance ids reported to start: %s" % str(instance_ids))
         return instance_ids

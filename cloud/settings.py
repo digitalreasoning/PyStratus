@@ -18,7 +18,8 @@ SERVICE_PROVIDER_MAP = {
     "ec2": ('cassandra.service', 'CassandraService')
   },
   "hadoop": {
-    "ec2": ('hadoop.service', 'HadoopService')
+    "ec2": ('hadoop.service', 'HadoopService'),
+    "ec2_spot": ('hadoop.service', 'HadoopService'),
   },
   "hadoop_cassandra_hybrid": {
     "ec2": ('hadoop_cassandra_hybrid.service', 'HadoopCassandraHybridService')

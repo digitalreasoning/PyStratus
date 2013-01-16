@@ -15,3 +15,6 @@
 
 class VolumesStillInUseException(Exception):
     pass
+
+class InvalidSpotConfigurationException(Exception):
+    pass

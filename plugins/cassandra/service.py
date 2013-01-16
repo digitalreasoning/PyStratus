@@ -192,7 +192,7 @@ class CassandraService(ServicePlugin):
         print "WAITING FOR ALL INSTANCES"
         while all_instances:
             i = all_instances[-1]
-            home = get_cassandra_home(i)
+            home = self.get_cassandra_home(i)
             print home
 
             if home == "":
