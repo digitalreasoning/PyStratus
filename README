@@ -4,9 +4,16 @@ manage Hadoop, Cassandra, and other distributed services, thus PyStratus was bor
 to Cloudera for providing a great starting point for us!Currently only Amazon EC2 is supported, 
 but we hope to add new cloud providers very soon.
 
-There is an Ubuntu PPA available here: https://launchpad.net/~jared-bunting/+archive/pystratus
+To get up and running quickly, the following script is sufficient (assumes that you have a ~/bin directory and it is on your PATH):
 
-To get up and running quickly you need the following:
+```code
+INSTALL_DIR=~/Tools/pystratus2
+virtualenv $INSTALL_DIR --no-site-packages
+$INSTALL_DIR/bin/pip install https://github.com/digitalreasoning/PyStratus/archive/master.zip
+ln -snf $INSTALL_DIR/bin/stratus ~/bin/stratus
+```
+
+PyStratus uses the following dependencies:
 
 * Python 2.5+
 * boto 
@@ -18,10 +25,10 @@ To get up and running quickly you need the following:
 * cElementTree or elementree
 * Fabric
 
-You can install the modules from above with easy_install (http://pypi.python.org/pypi/setuptools)
-
-Check out the project and run "python setup.py install" and the command "stratus" will now available 
+You may also check out the project and run "python setup.py install" and the command "stratus" will now available 
 and an egg file will be located in your site-packages directory. You may want to run the command with 
 sudo to install it for all users.
 
 See the full documentation at http://github.com/digitalreasoning/PyStratus/wiki/Documentation
+
+
