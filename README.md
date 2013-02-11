@@ -7,7 +7,7 @@ but we hope to add new cloud providers very soon.
 To get up and running quickly, the following script is sufficient (assumes that you have a ~/bin directory and it is on your PATH):
 
 ```code
-INSTALL_DIR=~/Tools/pystratus2
+INSTALL_DIR=~/Tools/pystratus
 virtualenv $INSTALL_DIR --no-site-packages
 $INSTALL_DIR/bin/pip install https://github.com/digitalreasoning/PyStratus/archive/master.zip
 ln -snf $INSTALL_DIR/bin/stratus ~/bin/stratus
