@@ -28,4 +28,5 @@ setup(name='stratus',
     scripts=['stratus'],
     include_package_data=True,
     package_data = {'': ['*.plugin']},
+    install_requires = ['boto==2.0','python-dateutil==1.5','simplejson','prettytable==0.5','yapsy==1.8','fabric','PyYAML'],
 )
