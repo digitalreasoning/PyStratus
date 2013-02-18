@@ -612,7 +612,7 @@ class HadoopService(ServicePlugin):
                 keypair_pub = run(self._wrap_user("cat %(key_filename)s.pub" % locals(), as_user))
                 
                 # once everything's inplace, set the owner to as_user
-                sudo("chown -R %(as_user)s:%(as_user)s %(ssh_dir)s" % locals())
+                sudo("sudo chown -R %(as_user)s:%(as_user)s %(ssh_dir)s" % locals())
         
         tmpfile.close()
         cb_running=-1
@@ -658,7 +658,7 @@ class HadoopService(ServicePlugin):
                     sudo(cmd)
                     run(self._wrap_user("echo StrictHostKeyChecking=no | sudo -i -u %(as_user)s tee -a %(ssh_config)s" % locals(), as_user))
                     # once everything's inplace, set the owner to as_user
-                    fab_output = run("chown -R %(as_user)s:%(as_user)s %(ssh_dir)s" % locals())
+                    fab_output = run("sudo chown -R %(as_user)s:%(as_user)s %(ssh_dir)s" % locals())
                 
                 fab_output = run(cb_alive_cmd)
                 if fab_output != "0":
