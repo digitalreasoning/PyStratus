@@ -4,7 +4,21 @@ manage Hadoop, Cassandra, and other distributed services, thus PyStratus was bor
 to Cloudera for providing a great starting point for us!Currently only Amazon EC2 is supported, 
 but we hope to add new cloud providers very soon.
 
-To get up and running quickly, the following script is sufficient (assumes that you have a ~/bin directory and it is on your PATH):
+To get up and running quickly, use virtualenv and install PyStratus with these instructions: 
+```code
+$ mkvirtualenv stratus
+(stratus)$ pip install https://github.com/digitalreasoning/PyStratus/archive/master.zip
+...
+# issue commands like: 
+(stratus)$ stratus list
+(stratus)$ stratus exec HADOOP_CLUSTER launch-cluster 3
+(stratus)$ stratus exec HADOOP_CLUSTER terminate-cluster
+...
+(stratus)$ deactivate # to leave virtualenv
+```
+
+
+Additionally, the following script is sufficient (assumes that you have a ~/bin directory and it is on your PATH):
 
 ```code
 INSTALL_DIR=~/Tools/pystratus
