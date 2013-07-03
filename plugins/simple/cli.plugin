@@ -5,5 +5,5 @@ Module = cli
 [Documentation]
 Author = Abe Music
 Website = http://github.com/digitalreasoning/PyStratus
-Description = A Cassandra CLI implementation for PyStratus
+Description = A simple CLI implementation for PyStratus
 

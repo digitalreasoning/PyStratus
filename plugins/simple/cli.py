@@ -1,3 +1,4 @@
+import os
 import sys
 import logging
 import urllib
@@ -58,6 +59,13 @@ where COMMAND and [OPTIONS] may be one of:
         # strip off the cluster name and command from argv
         argv = argv[2:]
 
+        # get spot configuration
+        self._spot_config = {
+                "spot_cluster": True if os.environ.get("SPOT_CLUSTER", options_dict.get("spot_cluster", "false")).lower() == "true" else False,
+                "max_price": options_dict.get("max_price", None),
+                "launch_group": options_dict.get("launch_group", None),
+         }
+
         # handle all known commands and error on an unknown command
         if self._command_name == "details":
             self.print_instances()
@@ -116,7 +124,10 @@ where COMMAND and [OPTIONS] may be one of:
             opt.get('user_packages'),
             opt.get('auto_shutdown'),
             opt.get('env'),
-            opt.get('security_groups'))
+            opt.get('security_groups'),
+            self._spot_config
+        )
+
 #        instance_template.add_env_strings(["CLUSTER_SIZE=%d" % number_of_nodes])
 
         print "Expanding cluster by %d instance(s)...please wait." % number_of_nodes
@@ -146,7 +157,10 @@ where COMMAND and [OPTIONS] may be one of:
             opt.get('user_packages'),
             opt.get('auto_shutdown'), 
             opt.get('env'),
-            opt.get('security_groups'))
+            opt.get('security_groups'),
+            self._spot_config
+        )
+
         instance_template.add_env_strings(["CLUSTER_SIZE=%d" % number_of_nodes])
 
         print "Launching cluster with %d instance(s)...please wait." % number_of_nodes

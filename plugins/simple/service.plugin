@@ -5,4 +5,4 @@ Module = service
 [Documentation]
 Author = Abe Music
 Website = http://github.com/digitalreasoning/PyStratus
-Description = A Cassandra service implementation for PyStratus
+Description = A simple service implementation for PyStratus
