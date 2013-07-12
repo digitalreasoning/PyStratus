@@ -247,8 +247,8 @@ where COMMAND and [OPTIONS] may be one of:
         for it in slave_templates:
             it.add_env_strings([
                 "CLUSTER_SIZE=%d" % (number_of_slaves+1),
-                "NN_HOST=%s" % master.public_dns_name,
-                "JT_HOST=%s" % master.public_dns_name,
+                "NN_HOST=%s" % master.private_dns_name,
+                "JT_HOST=%s" % master.private_dns_name,
                 "ZOOKEEPER_QUORUM=%s" % master.private_dns_name,
                 "PROVIDER=%s" % (provider)
             ])
